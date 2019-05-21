@@ -11,7 +11,7 @@ class Constraint(ABC):
     """Represents a constraint that the trajectory must satisfy to be valid."""
 
     @abstractmethod
-    def __call__(self, trajectory) -> float:
+    def __call__(self, trajectory, actions) -> float:
         """Returns the (>=0) cost of the given trajectory wrt the constraints this function represents."""
         pass
 
@@ -26,7 +26,7 @@ class TerminalConstraint(Constraint):
         super().__init__()
         self._safe_area = safe_area
 
-    def __call__(self, trajectory) -> float:
+    def __call__(self, trajectory, actions) -> float:
         if trajectory[-1] not in self._safe_area:
             return np.linalg.norm(self._safe_area.chebXc - trajectory[-1].numpy())
         else:
@@ -40,15 +40,31 @@ class ObstaclesConstraint(Constraint):
         super().__init__()
         self._obstacles_region = Region(obstacles)
 
-    def __call__(self, trajectory) -> float:
+    def __call__(self, trajectory, actions) -> float:
         # NB: only checks the states at each timestep, not the "lines" between them.
         # I'm not quite sure what we need for the final implementation.
 
         cost = 0
-        for s in trajectory:
-            if s in self._obstacles_region:
+        for state in trajectory:
+            if state in self._obstacles_region:
                 cost += 5
 
+        return cost
+
+
+class ActionConstraint(Constraint):
+    """Constrains actions to lie within some polytope."""
+
+    def __init__(self, safe_region: Polytope, penalty: float = 5):
+        super().__init__()
+        self._self_region = safe_region
+        self._penalty = penalty
+
+    def __call__(self, trajectory, actions) -> float:
+        cost = 0
+        for action in actions:
+            if action not in self._self_region:
+                cost += self._penalty
         return cost
 
 
@@ -85,8 +101,8 @@ class ConstrainedCemMpc:
 
         return trajectory_tensor, actions
 
-    def _compute_constraint_cost(self, trajectory):
-        return sum([constraint_func(trajectory) for constraint_func in self._constraints])
+    def _compute_constraint_cost(self, trajectory, actions):
+        return sum([constraint_func(trajectory, actions) for constraint_func in self._constraints])
 
     def find_trajectory(self, initial_state):
         means = torch.zeros((self._time_horizon, self._action_dimen))
@@ -94,7 +110,7 @@ class ConstrainedCemMpc:
         ts_by_time = []
         for i in range(self._num_iterations):
             ts = [self._sample_trajectory(initial_state, means, stds) for _ in range(self._num_rollouts)]
-            costs = [(aes, self._compute_constraint_cost(t)) for (t, aes) in ts]
+            costs = [(aes, self._compute_constraint_cost(t, aes)) for (t, aes) in ts]
 
             costs.sort(key=lambda x: x[1])
             elites = [aes for aes, _ in costs[:self._num_elites]]
@@ -104,5 +120,9 @@ class ConstrainedCemMpc:
             stds = elite_aes.std(dim=0)
 
             ts_by_time.append([x[0] for x in ts])
+
+        # TODO: Check that trajectory satisfies all constraints.
+        # Need to do some intelligent combination of iterating and restarting until objective function is good
+        # and constraints are satisfied.
 
         return ts_by_time
