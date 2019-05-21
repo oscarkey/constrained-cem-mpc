@@ -1,98 +1,54 @@
-import torch
-from polytope import polytope
 import matplotlib.pyplot as plt
+import torch
 
-state_dimen = 2
-action_dimen = 2
-x_max = 10
-y_max = 10
-T = 15
-R = 200
-E = 10
-N = 500
+import demo
 
-obstacle_constraints = [polytope.box2poly([[4, 5], [4, 5]])]
-safe_constraint = polytope.box2poly([[7, 8], [7, 8]])
+_T = 15
+_R = 3
+_E = 10
+_N = 1
 
 
-def dynamics(s, a):
-    assert s.shape == (state_dimen,)
-    assert a.shape == (action_dimen,)
+class ConstrainedCemMpc:
 
-    return s + a
+    def __init__(self, dynamics_func, objective_func, constraint_funcs, state_dimen, action_dimen):
+        self._dynamics_func = dynamics_func
+        self._objective_func = objective_func
+        self._constraint_funcs = constraint_funcs
+        self._state_dimen = state_dimen
+        self._action_dimen = action_dimen
 
+    def _sample_trajectory(self, means, stds):
+        actions = torch.distributions.Normal(means, stds).sample()
 
-def objective_cost(t):
-    return 0
+        trajectory = [torch.zeros((self._state_dimen,), dtype=torch.float)]
+        for a in actions:
+            trajectory.append(self._dynamics_func(trajectory[-1], a))
 
+        return torch.stack(trajectory), actions
 
-def check_intersect(t, c):
-    assert t.shape[1] == state_dimen
-    for i in range(t.shape[0]):
-        if t[i].numpy() in c:
-            return True
-    return False
+    def _compute_constraint_cost(self, trajectory):
+        return sum([constraint_func(trajectory) for constraint_func in self._constraint_funcs])
 
+    def find_trajectory(self):
+        means = torch.zeros((_R, _T, self._action_dimen))
+        stds = torch.ones((_R, _T, self._action_dimen))
+        ts_by_time = []
+        for i in range(_N):
+            ts = [self._sample_trajectory(mean, std) for mean, std in zip(means, stds)]
+            costs = [(aes, self._compute_constraint_cost(t)) for (t, aes) in ts]
 
-def constraint_cost(t):
-    cost = 0
+            costs.sort(key=lambda x: x[1])
+            elites = [aes for aes, _ in costs[:_E]]
+            elite_aes = torch.stack(elites)
 
-    # Work out how to implement cost for obstacles.
-    for c in obstacle_constraints:
-        if check_intersect(t, c):
-            cost += 1
+            means = elite_aes.mean(dim=0)
+            stds = elite_aes.std(dim=0)
 
-    if t[-1] not in safe_constraint:
-        #         cost += np.linalg.norm(safe_constraint.chebXc - t[-1].numpy())
-        cost += 100
+            ts_by_time.append([x[0] for x in ts])
+            print([x[1] for x in costs])
+            axes = plt.axes()
+            demo.plot_trajs(axes, [x[1] for x in ts])
+            plt.show()
 
-    # Actions?
-
-    return cost
-
-
-def plot_trajs(axes, ts):
-    axes.set_xticks([0, x_max])
-    axes.set_yticks([0, y_max])
-
-    obstacle_constraints[0].plot(ax=axes)
-    safe_constraint.plot(ax=axes)
-
-    for t in ts:
-        xs = [s[0].item() for s in t]
-        ys = [s[1].item() for s in t]
-        axes.plot(xs, ys)
-
-
-def sample_traj(means, stds):
-    aes = torch.distributions.Normal(means, stds).sample()
-
-    t = [torch.tensor([0, 0], dtype=torch.float)]
-    for a in aes:
-        t.append(dynamics(t[-1], a))
-
-    return torch.stack(t), aes
-
-
-def main():
-    means = torch.zeros((R, T, action_dimen))
-    stds = torch.ones((R, T, action_dimen))
-    ts_by_time = []
-    for i in range(N):
-        ts = [sample_traj(mean, std) for mean, std in zip(means, stds)]
-        costs = [(aes, constraint_cost(t)) for (t, aes) in ts]
-        costs.sort(key=lambda x: x[1])
-        elites = [aes for aes, _ in costs[:E]]
-        elite_aes = torch.stack(elites)
-        means = elite_aes.mean(dim=0)
-        ts_by_time.append([x[0] for x in ts])
-    #     print([x[1] for x in costs])
-    #     plot_trajs(axes, [ts[-1] for ts in ts_by_time][:-10])
-
-    axes = plt.axes()
-    plot_trajs(axes, ts_by_time[499][0:20])
-    plt.show()
-
-
-if __name__ == '__main__':
-    main()
+# axes = plt.axes()  # plot_trajs(axes, ts_by_time[499][0:20])  # plt.show()
