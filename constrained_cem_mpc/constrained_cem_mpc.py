@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
-from polytope import Polytope
+from polytope import Polytope, Region
 
 from utils import assert_shape
 
@@ -12,7 +12,7 @@ class Constraint(ABC):
 
     @abstractmethod
     def __call__(self, trajectory) -> float:
-        """Returns the cost of the given trajectory wrt the constraints this function represents."""
+        """Returns the (>=0) cost of the given trajectory wrt the constraints this function represents."""
         pass
 
 
@@ -33,14 +33,32 @@ class TerminalConstraint(Constraint):
             return 0
 
 
+class ObstaclesConstraint(Constraint):
+    """Represents obstacles that the trajectory must avoid (i.e. constraint on all states)."""
+
+    def __init__(self, obstacles: [Polytope]) -> None:
+        super().__init__()
+        self._obstacles_region = Region(obstacles)
+
+    def __call__(self, trajectory) -> float:
+        # NB: only checks the states at each timestep, not the "lines" between them.
+        # I'm not quite sure what we need for the final implementation.
+
+        cost = 0
+        for s in trajectory:
+            if s in self._obstacles_region:
+                cost += 5
+
+        return cost
+
+
 class ConstrainedCemMpc:
 
-    def __init__(self, dynamics_func, objective_func, constraint_funcs: [Constraint], state_dimen: int,
-                 action_dimen: int, plot_func, time_horizon: int, num_rollouts: int, num_elites: int,
-                 num_iterations: int):
+    def __init__(self, dynamics_func, objective_func, constraints: [Constraint], state_dimen: int, action_dimen: int,
+                 plot_func, time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int):
         self._dynamics_func = dynamics_func
         self._objective_func = objective_func
-        self._constraint_funcs = constraint_funcs
+        self._constraints = constraints
         self._state_dimen = state_dimen
         self._action_dimen = action_dimen
         self._plot_func = plot_func
@@ -68,7 +86,7 @@ class ConstrainedCemMpc:
         return trajectory_tensor, actions
 
     def _compute_constraint_cost(self, trajectory):
-        return sum([constraint_func(trajectory) for constraint_func in self._constraint_funcs])
+        return sum([constraint_func(trajectory) for constraint_func in self._constraints])
 
     def find_trajectory(self, initial_state):
         means = torch.zeros((self._time_horizon, self._action_dimen))

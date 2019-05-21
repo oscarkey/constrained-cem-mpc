@@ -1,9 +1,8 @@
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 from polytope import polytope
 
-from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint
+from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint, ObstaclesConstraint
 from utils import assert_shape
 
 state_dimen = 2
@@ -11,7 +10,9 @@ action_dimen = 2
 x_max = 10
 y_max = 10
 
-obstacle_constraints = [polytope.box2poly([[4, 5], [4, 5]])]
+obstacle_constraints = [polytope.box2poly([[2, 7], [2, 7]]), polytope.box2poly([[-1, 0], [0, y_max]]),
+                        polytope.box2poly([[x_max, x_max + 1], [0, y_max]]), polytope.box2poly([[0, x_max], [-1, 0]]),
+                        polytope.box2poly([[0, x_max], [y_max, y_max + 1]])]
 terminal_constraint = polytope.box2poly([[7, 8], [7, 8]])
 
 
@@ -43,7 +44,8 @@ def plot_trajs(ts, axes=None):
     axes.set_xticks([0, x_max])
     axes.set_yticks([0, y_max])
 
-    obstacle_constraints[0].plot(ax=axes)
+    for obstacle_constraint in obstacle_constraints:
+        obstacle_constraint.plot(ax=axes)
     terminal_constraint.plot(ax=axes)
 
     for t in ts:
@@ -56,9 +58,9 @@ def plot_trajs(ts, axes=None):
 
 
 def main():
-    mpc = ConstrainedCemMpc(dynamics, objective_cost, [TerminalConstraint(terminal_constraint)], state_dimen,
-                            action_dimen, plot_trajs, time_horizon=15, num_rollouts=100, num_elites=10,
-                            num_iterations=60)
+    constraints = [TerminalConstraint(terminal_constraint), ObstaclesConstraint(obstacle_constraints)]
+    mpc = ConstrainedCemMpc(dynamics, objective_cost, constraints, state_dimen, action_dimen, plot_trajs,
+                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=60)
     ts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
 
     # for t in range(0, len(ts_by_time), 10):

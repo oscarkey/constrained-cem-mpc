@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from polytope import polytope
 
-from constrained_cem_mpc import TerminalConstraint
+from constrained_cem_mpc import TerminalConstraint, ObstaclesConstraint
 
 
 class TestTerminalConstraint():
@@ -25,3 +25,26 @@ class TestTerminalConstraint():
         cost = func(trajectory)
 
         assert cost == 0
+
+
+class TestObstaclesConstraint():
+    def test__misses_obstacle__returns_zero(self):
+        obstacle1 = polytope.box2poly([[1, 2], [1, 2]])
+        obstacle2 = polytope.box2poly([[2, 3], [2, 3]])
+        func = ObstaclesConstraint([obstacle1, obstacle2])
+        trajectory = torch.Tensor([[0, 0], [0.5, 0.5]])
+
+        cost = func(trajectory)
+
+        assert cost == 0
+
+    def test__hits_obstacle__returns_high_cost(self):
+        obstacle1 = polytope.box2poly([[1, 2], [1, 2]])
+        obstacle2 = polytope.box2poly([[2, 3], [2, 3]])
+        func = ObstaclesConstraint([obstacle1, obstacle2])
+        # Miss the first obstacle, hit the second.
+        trajectory = torch.Tensor([[0, 0], [2.5, 0], [2.5, 2.5]])
+
+        cost = func(trajectory)
+
+        assert cost >= 0
