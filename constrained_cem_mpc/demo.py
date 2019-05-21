@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from polytope import polytope
 
-from constrained_cem_mpc import ConstrainedCemMpc
+from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint
 from utils import assert_shape
 
 state_dimen = 2
@@ -34,22 +34,6 @@ def check_intersect(t, c):
     return False
 
 
-def constraint_cost(t):
-    cost = 0
-
-    # Work out how to implement cost for obstacles.
-    for c in obstacle_constraints:
-        if check_intersect(t, c):
-            cost += 1
-
-    if t[-1] not in terminal_constraint:
-        cost += np.linalg.norm(terminal_constraint.chebXc - t[-1].numpy())
-
-    # Actions?
-
-    return cost
-
-
 def plot_trajs(ts, axes=None):
     should_show = False
     if axes is None:
@@ -72,8 +56,9 @@ def plot_trajs(ts, axes=None):
 
 
 def main():
-    mpc = ConstrainedCemMpc(dynamics, objective_cost, [constraint_cost], state_dimen, action_dimen, plot_trajs,
-                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=60)
+    mpc = ConstrainedCemMpc(dynamics, objective_cost, [TerminalConstraint(terminal_constraint)], state_dimen,
+                            action_dimen, plot_trajs, time_horizon=15, num_rollouts=100, num_elites=10,
+                            num_iterations=60)
     ts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
 
     # for t in range(0, len(ts_by_time), 10):

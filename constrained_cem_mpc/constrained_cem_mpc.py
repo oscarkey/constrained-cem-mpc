@@ -1,12 +1,43 @@
+from abc import ABC, abstractmethod
+
+import numpy as np
 import torch
+from polytope import Polytope
 
 from utils import assert_shape
 
 
+class Constraint(ABC):
+    """Represents a constraint that the trajectory must satisfy to be valid."""
+
+    @abstractmethod
+    def __call__(self, trajectory) -> float:
+        """Returns the cost of the given trajectory wrt the constraints this function represents."""
+        pass
+
+
+class TerminalConstraint(Constraint):
+    """A terminal polytope that the trajectory must finish inside to be valid (i.e. a safe area).
+
+    If the trajectory is not valid then the cost is the Euclidian distance to the center of the constraint.
+    """
+
+    def __init__(self, safe_area: Polytope) -> None:
+        super().__init__()
+        self._safe_area = safe_area
+
+    def __call__(self, trajectory) -> float:
+        if trajectory[-1] not in self._safe_area:
+            return np.linalg.norm(self._safe_area.chebXc - trajectory[-1].numpy())
+        else:
+            return 0
+
+
 class ConstrainedCemMpc:
 
-    def __init__(self, dynamics_func, objective_func, constraint_funcs, state_dimen: int, action_dimen: int, plot_func,
-                 time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int):
+    def __init__(self, dynamics_func, objective_func, constraint_funcs: [Constraint], state_dimen: int,
+                 action_dimen: int, plot_func, time_horizon: int, num_rollouts: int, num_elites: int,
+                 num_iterations: int):
         self._dynamics_func = dynamics_func
         self._objective_func = objective_func
         self._constraint_funcs = constraint_funcs
