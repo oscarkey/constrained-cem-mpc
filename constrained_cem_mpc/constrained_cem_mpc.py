@@ -1,10 +1,34 @@
 from abc import ABC, abstractmethod
 
-import numpy as np
 import torch
-from polytope import Polytope, Region
+import torch.nn.functional as F
+from polytope import Polytope, polytope
 
 from utils import assert_shape
+
+
+class TorchPolytope:
+    """Represents a polytope in n-dimensional space, with some limited operations.
+
+    Uses Torch tensors, and thus is hopefully a faster replacement for the polytope package.
+    """
+
+    def __init__(self, polytope: Polytope):
+        self._A = torch.tensor(polytope.A)
+        self._b = torch.tensor(polytope.b)
+        self.chebXc = torch.tensor(polytope.chebXc)
+
+    def __contains__(self, x: torch.Tensor):
+        assert isinstance(x, torch.Tensor), 'Expected tensor, got {x}'
+        for Ai, bi in zip(self._A, self._b):
+            if Ai.dot(x) > bi:
+                return False
+        return True
+
+
+def box2torchpoly(box: [[float]]) -> TorchPolytope:
+    """Similar to polytope.box2poly(), but returns a TorchPolytope."""
+    return TorchPolytope(polytope.box2poly(box))
 
 
 class Constraint(ABC):
@@ -22,13 +46,13 @@ class TerminalConstraint(Constraint):
     If the trajectory is not valid then the cost is the Euclidian distance to the center of the constraint.
     """
 
-    def __init__(self, safe_area: Polytope) -> None:
+    def __init__(self, safe_area: TorchPolytope) -> None:
         super().__init__()
         self._safe_area = safe_area
 
     def __call__(self, trajectory, actions) -> float:
         if trajectory[-1] not in self._safe_area:
-            return np.linalg.norm(self._safe_area.chebXc - trajectory[-1].numpy())
+            return F.pairwise_distance(self._safe_area.chebXc.unsqueeze(0), trajectory[-1].unsqueeze(0))
         else:
             return 0
 
@@ -36,9 +60,9 @@ class TerminalConstraint(Constraint):
 class ObstaclesConstraint(Constraint):
     """Represents obstacles that the trajectory must avoid (i.e. constraint on all states)."""
 
-    def __init__(self, obstacles: [Polytope]) -> None:
+    def __init__(self, obstacles: [TorchPolytope]) -> None:
         super().__init__()
-        self._obstacles_region = Region(obstacles)
+        self._obstacles = obstacles
 
     def __call__(self, trajectory, actions) -> float:
         # NB: only checks the states at each timestep, not the "lines" between them.
@@ -46,8 +70,9 @@ class ObstaclesConstraint(Constraint):
 
         cost = 0
         for state in trajectory:
-            if state in self._obstacles_region:
-                cost += 5
+            for obstacle in self._obstacles:
+                if state in obstacle:
+                    cost += 3
 
         return cost
 
@@ -55,7 +80,7 @@ class ObstaclesConstraint(Constraint):
 class ActionConstraint(Constraint):
     """Constrains actions to lie within some polytope."""
 
-    def __init__(self, safe_region: Polytope, penalty: float = 5):
+    def __init__(self, safe_region: TorchPolytope, penalty: float = 3):
         super().__init__()
         self._self_region = safe_region
         self._penalty = penalty
