@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from polytope import polytope
 
 from constrained_cem_mpc import ConstrainedCemMpc
@@ -72,8 +73,12 @@ def plot_trajs(ts, axes=None):
 
 def main():
     mpc = ConstrainedCemMpc(dynamics, objective_cost, [constraint_cost], state_dimen, action_dimen, plot_trajs,
-                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=100)
-    mpc.find_trajectory()
+                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=60)
+    ts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
+
+    # for t in range(0, len(ts_by_time), 10):
+    #     plot_trajs(ts_by_time[t][0:10])
+    plot_trajs(ts_by_time[-1][0:10])
 
 
 if __name__ == '__main__':

@@ -18,14 +18,15 @@ class ConstrainedCemMpc:
         self._num_elites = num_elites
         self._num_iterations = num_iterations
 
-    def _sample_trajectory(self, means, stds):
+    def _sample_trajectory(self, initial_state, means, stds):
+        assert_shape(initial_state, (self._state_dimen,))
         assert_shape(means, (self._time_horizon, self._action_dimen))
         assert_shape(stds, (self._time_horizon, self._action_dimen))
 
         actions = torch.distributions.Normal(means, stds).sample()
         assert_shape(actions, (self._time_horizon, self._action_dimen))
 
-        trajectory = [torch.zeros((self._state_dimen,), dtype=torch.float)]
+        trajectory = [initial_state]
         for a in actions:
             trajectory.append(self._dynamics_func(trajectory[-1], a))
 
@@ -38,12 +39,12 @@ class ConstrainedCemMpc:
     def _compute_constraint_cost(self, trajectory):
         return sum([constraint_func(trajectory) for constraint_func in self._constraint_funcs])
 
-    def find_trajectory(self):
+    def find_trajectory(self, initial_state):
         means = torch.zeros((self._time_horizon, self._action_dimen))
         stds = torch.ones((self._time_horizon, self._action_dimen))
         ts_by_time = []
         for i in range(self._num_iterations):
-            ts = [self._sample_trajectory(means, stds) for _ in range(self._num_rollouts)]
+            ts = [self._sample_trajectory(initial_state, means, stds) for _ in range(self._num_rollouts)]
             costs = [(aes, self._compute_constraint_cost(t)) for (t, aes) in ts]
 
             costs.sort(key=lambda x: x[1])
@@ -54,3 +55,5 @@ class ConstrainedCemMpc:
             stds = elite_aes.std(dim=0)
 
             ts_by_time.append([x[0] for x in ts])
+
+        return ts_by_time
