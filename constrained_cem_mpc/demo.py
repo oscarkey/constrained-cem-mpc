@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 from polytope import polytope
 
 from constrained_cem_mpc import ConstrainedCemMpc
+from utils import assert_shape
+import numpy as np
 
 state_dimen = 2
 action_dimen = 2
@@ -13,8 +15,8 @@ terminal_constraint = polytope.box2poly([[7, 8], [7, 8]])
 
 
 def dynamics(s, a):
-    assert s.shape == (state_dimen,)
-    assert a.shape == (action_dimen,)
+    assert_shape(s, (state_dimen,))
+    assert_shape(a, (action_dimen,))
 
     return s + a
 
@@ -40,8 +42,7 @@ def constraint_cost(t):
             cost += 1
 
     if t[-1] not in terminal_constraint:
-        # cost += np.linalg.norm(safe_constraint.chebXc - t[-1].numpy())
-        cost += 100
+        cost += np.linalg.norm(terminal_constraint.chebXc - t[-1].numpy())
 
     # Actions?
 

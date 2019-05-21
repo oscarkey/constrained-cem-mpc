@@ -1,9 +1,11 @@
 import torch
 
+from utils import assert_shape
+
 _T = 15
-_R = 3
+_R = 100
 _E = 10
-_N = 1
+_N = 100
 
 
 class ConstrainedCemMpc:
@@ -17,23 +19,31 @@ class ConstrainedCemMpc:
         self._plot_func = plot_func
 
     def _sample_trajectory(self, means, stds):
+        assert_shape(means, (_T, self._action_dimen))
+        assert_shape(stds, (_T, self._action_dimen))
+
         actions = torch.distributions.Normal(means, stds).sample()
+        assert_shape(actions, (_T, self._action_dimen))
 
         trajectory = [torch.zeros((self._state_dimen,), dtype=torch.float)]
         for a in actions:
             trajectory.append(self._dynamics_func(trajectory[-1], a))
 
-        return torch.stack(trajectory), actions
+        trajectory_tensor = torch.stack(trajectory)
+        # One more state than _T because of the initial state.
+        assert_shape(trajectory_tensor, (_T+1, self._state_dimen))
+
+        return trajectory_tensor, actions
 
     def _compute_constraint_cost(self, trajectory):
         return sum([constraint_func(trajectory) for constraint_func in self._constraint_funcs])
 
     def find_trajectory(self):
-        means = torch.zeros((_R, _T, self._action_dimen))
-        stds = torch.ones((_R, _T, self._action_dimen))
+        means = torch.zeros((_T, self._action_dimen))
+        stds = torch.ones((_T, self._action_dimen))
         ts_by_time = []
         for i in range(_N):
-            ts = [self._sample_trajectory(mean, std) for mean, std in zip(means, stds)]
+            ts = [self._sample_trajectory(means, stds) for _ in range(_R)]
             costs = [(aes, self._compute_constraint_cost(t)) for (t, aes) in ts]
 
             costs.sort(key=lambda x: x[1])
@@ -44,7 +54,7 @@ class ConstrainedCemMpc:
             stds = elite_aes.std(dim=0)
 
             ts_by_time.append([x[0] for x in ts])
-            print([x[1] for x in costs])
-            self._plot_func([x[1] for x in ts])
+
+        self._plot_func(ts_by_time[-1][0:20])
 
 # axes = plt.axes()  # plot_trajs(axes, ts_by_time[499][0:20])  # plt.show()

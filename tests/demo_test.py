@@ -1,6 +1,7 @@
 import torch
 
 import demo
+import numpy as np
 
 
 class TestDemo(object):
@@ -11,7 +12,8 @@ class TestDemo(object):
 
         cost = demo.constraint_cost(trajectory)
 
-        assert cost == 100
+        distance = np.sqrt(np.square(constraint_center[0]) + np.square(constraint_center[1]))
+        assert cost == distance
 
     def test_constraint_func_terminal_hit_returns_zero(self):
         constraint_center = demo.terminal_constraint.chebXc
