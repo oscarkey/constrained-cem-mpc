@@ -1,4 +1,7 @@
+import matplotlib.pyplot as plt
 from polytope import polytope
+
+from constrained_cem_mpc import ConstrainedCemMpc
 
 state_dimen = 2
 action_dimen = 2
@@ -6,7 +9,8 @@ x_max = 10
 y_max = 10
 
 obstacle_constraints = [polytope.box2poly([[4, 5], [4, 5]])]
-safe_constraint = polytope.box2poly([[7, 8], [7, 8]])
+terminal_constraint = polytope.box2poly([[7, 8], [7, 8]])
+
 
 def dynamics(s, a):
     assert s.shape == (state_dimen,)
@@ -35,7 +39,7 @@ def constraint_cost(t):
         if check_intersect(t, c):
             cost += 1
 
-    if t[-1] not in safe_constraint:
+    if t[-1] not in terminal_constraint:
         # cost += np.linalg.norm(safe_constraint.chebXc - t[-1].numpy())
         cost += 100
 
@@ -43,20 +47,32 @@ def constraint_cost(t):
 
     return cost
 
-def plot_trajs(axes, ts):
+
+def plot_trajs(ts, axes=None):
+    should_show = False
+    if axes is None:
+        axes = plt.axes()
+        should_show = True
+
     axes.set_xticks([0, x_max])
     axes.set_yticks([0, y_max])
 
     obstacle_constraints[0].plot(ax=axes)
-    safe_constraint.plot(ax=axes)
+    terminal_constraint.plot(ax=axes)
 
     for t in ts:
         xs = [s[0].item() for s in t]
         ys = [s[1].item() for s in t]
         axes.plot(xs, ys)
 
+    if should_show:
+        plt.show()
+
+
 def main():
-    pass
+    mpc = ConstrainedCemMpc(dynamics, objective_cost, [constraint_cost], state_dimen, action_dimen, plot_trajs)
+    mpc.find_trajectory()
+
 
 if __name__ == '__main__':
     main()

@@ -1,7 +1,4 @@
-import matplotlib.pyplot as plt
 import torch
-
-import demo
 
 _T = 15
 _R = 3
@@ -11,12 +8,13 @@ _N = 1
 
 class ConstrainedCemMpc:
 
-    def __init__(self, dynamics_func, objective_func, constraint_funcs, state_dimen, action_dimen):
+    def __init__(self, dynamics_func, objective_func, constraint_funcs, state_dimen: int, action_dimen: int, plot_func):
         self._dynamics_func = dynamics_func
         self._objective_func = objective_func
         self._constraint_funcs = constraint_funcs
         self._state_dimen = state_dimen
         self._action_dimen = action_dimen
+        self._plot_func = plot_func
 
     def _sample_trajectory(self, means, stds):
         actions = torch.distributions.Normal(means, stds).sample()
@@ -47,8 +45,6 @@ class ConstrainedCemMpc:
 
             ts_by_time.append([x[0] for x in ts])
             print([x[1] for x in costs])
-            axes = plt.axes()
-            demo.plot_trajs(axes, [x[1] for x in ts])
-            plt.show()
+            self._plot_func([x[1] for x in ts])
 
 # axes = plt.axes()  # plot_trajs(axes, ts_by_time[499][0:20])  # plt.show()
