@@ -20,10 +20,10 @@ class TorchPolytope:
 
     def __contains__(self, x: torch.Tensor):
         assert isinstance(x, torch.Tensor), 'Expected tensor, got {x}'
-        for Ai, bi in zip(self._A, self._b):
-            if Ai.dot(x) > bi:
-                return False
-        return True
+        return len((torch.matmul(self._A, x) - self._b > 0).nonzero()) == 0
+
+    def plot(self, *args, **kwargs):
+        Polytope(self._A.numpy(), self._b.numpy()).plot(*args, **kwargs)
 
 
 def box2torchpoly(box: [[float]]) -> TorchPolytope:

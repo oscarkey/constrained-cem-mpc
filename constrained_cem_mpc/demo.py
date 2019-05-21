@@ -67,7 +67,7 @@ def main():
                    ObstaclesConstraint(obstacle_constraints),  #
                    ActionConstraint(box2torchpoly([[-1, 1], [-1, 1]]))]
     mpc = ConstrainedCemMpc(dynamics, objective_cost, constraints, state_dimen, action_dimen, plot_trajs,
-                            time_horizon=15, num_rollouts=200, num_elites=10, num_iterations=200)
+                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=200)
     ts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
 
     # for t in range(0, len(ts_by_time), 10):
