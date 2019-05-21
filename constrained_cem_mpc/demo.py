@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
+import numpy as np
 from polytope import polytope
 
 from constrained_cem_mpc import ConstrainedCemMpc
 from utils import assert_shape
-import numpy as np
 
 state_dimen = 2
 action_dimen = 2
@@ -71,7 +71,8 @@ def plot_trajs(ts, axes=None):
 
 
 def main():
-    mpc = ConstrainedCemMpc(dynamics, objective_cost, [constraint_cost], state_dimen, action_dimen, plot_trajs)
+    mpc = ConstrainedCemMpc(dynamics, objective_cost, [constraint_cost], state_dimen, action_dimen, plot_trajs,
+                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=100)
     mpc.find_trajectory()
 
 
