@@ -9,6 +9,8 @@ verify_ssl = true
 torch = "*"
 numpy = "*"
 matplotlib = "*"
+ipykernel = "*"
+pytest = "*"
 
 [requires]
 python_version = "3.7"
