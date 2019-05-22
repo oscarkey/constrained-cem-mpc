@@ -2,7 +2,8 @@ import numpy as np
 import torch
 from polytope import polytope
 
-from constrained_cem_mpc import TerminalConstraint, ObstaclesConstraint, ActionConstraint, TorchPolytope, box2torchpoly
+from constrained_cem_mpc import TerminalConstraint, ObstaclesConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
+    RolloutFunction, Constraint
 
 
 class TestTerminalConstraint:
@@ -97,3 +98,74 @@ class TestTorchPolytope:
         torch_polytope = TorchPolytope(np_polytope)
 
         assert np.array_equal(torch_polytope.chebXc.numpy(), np_polytope.chebXc)
+
+
+STATE_DIMEN = 2
+ACTION_DIMEN = 2
+TIME_HORIZON = 3
+
+
+class TestConstraint(Constraint):
+    def __call__(self, trajectory, actions) -> float:
+        if trajectory[-1][0].item() == 1 and trajectory[-1][1].item() == 1:
+            return 5.0
+        else:
+            return 0.0
+
+
+class TestRolloutFunction:
+
+    @staticmethod
+    def _dynamics_function(state, action):
+        return state + action
+
+    def _set_up(self):
+        func = RolloutFunction(self._dynamics_function, [], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
+        initial_state = torch.tensor([0, 0], dtype=torch.double)
+        means = torch.tensor([[1, 0], [0, 1], [0, 0]], dtype=torch.double)
+        stds = torch.zeros((TIME_HORIZON, ACTION_DIMEN), dtype=torch.double)
+
+        return func, initial_state, means, stds
+
+    def test__perform_rollout__trajectory_correct(self):
+        func, initial_state, means, stds = self._set_up()
+
+        trajectory, _, _ = func.perform_rollout((initial_state, means, stds))
+
+        assert trajectory.shape == (TIME_HORIZON + 1, STATE_DIMEN)
+
+        assert trajectory[0][0] == 0
+        assert trajectory[0][1] == 0
+
+        assert trajectory[1][0] == 1
+        assert trajectory[1][1] == 0
+
+        assert trajectory[2][0] == 1
+        assert trajectory[2][1] == 1
+
+        assert trajectory[3][0] == 1
+        assert trajectory[3][1] == 1
+
+    def test__perform_rollout__actions_correct(self):
+        func, initial_state, means, stds = self._set_up()
+
+        _, actions, _ = func.perform_rollout((initial_state, means, stds))
+
+        assert actions.shape == (TIME_HORIZON, ACTION_DIMEN)
+
+        assert actions[0][0] == 1
+        assert actions[0][1] == 0
+
+        assert actions[1][0] == 0
+        assert actions[1][1] == 1
+
+        assert actions[2][0] == 0
+        assert actions[2][1] == 0
+
+    def test__perform_rollout__cost_correct(self):
+        _, initial_state, means, stds = self._set_up()
+        func = RolloutFunction(self._dynamics_function, [TestConstraint()], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
+
+        _, _, cost = func.perform_rollout((initial_state, means, stds))
+
+        assert cost == 5

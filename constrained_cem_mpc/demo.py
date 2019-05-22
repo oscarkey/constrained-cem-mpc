@@ -26,10 +26,6 @@ def dynamics(s, a):
     return s + a
 
 
-def objective_cost(t):
-    return 0
-
-
 def check_intersect(t, c):
     assert t.shape[1] == state_dimen
     for i in range(t.shape[0]):
@@ -66,13 +62,13 @@ def main():
     constraints = [TerminalConstraint(terminal_constraint),  #
                    ObstaclesConstraint(obstacle_constraints),  #
                    ActionConstraint(box2torchpoly([[-1, 1], [-1, 1]]))]
-    mpc = ConstrainedCemMpc(dynamics, objective_cost, constraints, state_dimen, action_dimen, plot_trajs,
-                            time_horizon=15, num_rollouts=100, num_elites=10, num_iterations=200)
-    ts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
+    mpc = ConstrainedCemMpc(dynamics, constraints, state_dimen, action_dimen, time_horizon=15, num_rollouts=200,
+                            num_elites=10, num_iterations=200, num_processes=2)
+    rollouts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
 
     # for t in range(0, len(ts_by_time), 10):
     #     plot_trajs(ts_by_time[t][0:10])
-    plot_trajs(ts_by_time[-1][0:10])
+    plot_trajs([x[0] for x in rollouts_by_time[-1][0:10]])
 
 
 if __name__ == '__main__':

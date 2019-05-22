@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 import torch
 import torch.nn.functional as F
 from polytope import Polytope, polytope
+from torch import Tensor
+from torch.multiprocessing import Pool
 
 from utils import assert_shape
 
@@ -18,8 +20,8 @@ class TorchPolytope:
         self._b = torch.tensor(polytope.b)
         self.chebXc = torch.tensor(polytope.chebXc)
 
-    def __contains__(self, x: torch.Tensor):
-        assert isinstance(x, torch.Tensor), 'Expected tensor, got {x}'
+    def __contains__(self, x: Tensor):
+        assert isinstance(x, Tensor), 'Expected tensor, got {x}'
         return len((torch.matmul(self._A, x) - self._b > 0).nonzero()) == 0
 
     def plot(self, *args, **kwargs):
@@ -93,22 +95,33 @@ class ActionConstraint(Constraint):
         return cost
 
 
-class ConstrainedCemMpc:
+class RolloutFunction:
+    """Computes rollouts (trajectory, action sequence, cost) given an initial state and parameters.
 
-    def __init__(self, dynamics_func, objective_func, constraints: [Constraint], state_dimen: int, action_dimen: int,
-                 plot_func, time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int):
+    This class and all of its members are passed between processes, so should be kept lightweight.
+    """
+
+    def __init__(self, dynamics_func, constraints: [Constraint], state_dimen: int, action_dimen: int,
+                 time_horizon: int):
         self._dynamics_func = dynamics_func
-        self._objective_func = objective_func
         self._constraints = constraints
         self._state_dimen = state_dimen
         self._action_dimen = action_dimen
-        self._plot_func = plot_func
         self._time_horizon = time_horizon
-        self._num_rollouts = num_rollouts
-        self._num_elites = num_elites
-        self._num_iterations = num_iterations
 
-    def _sample_trajectory(self, initial_state, means, stds):
+    def perform_rollout(self, args: (Tensor, Tensor, Tensor)) -> (Tensor, Tensor, float):
+        """Samples a trajectory, and returns the trajectory and the cost.
+        :return (sequence of states, sequence of actions, cost)
+        """
+        initial_state, means, stds = args
+        trajectory, actions = self._sample_trajectory(initial_state, means, stds)
+        cost = self._compute_constraint_cost(trajectory, actions)
+        return trajectory, actions, cost
+
+    def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> (Tensor, Tensor):
+        """Randomly samples T actions and computes the trajectory.
+        :return (sequence of states, sequence of actions)
+        """
         assert_shape(initial_state, (self._state_dimen,))
         assert_shape(means, (self._time_horizon, self._action_dimen))
         assert_shape(stds, (self._time_horizon, self._action_dimen))
@@ -129,25 +142,43 @@ class ConstrainedCemMpc:
     def _compute_constraint_cost(self, trajectory, actions):
         return sum([constraint_func(trajectory, actions) for constraint_func in self._constraints])
 
+
+class ConstrainedCemMpc:
+
+    def __init__(self, dynamics_func, constraints: [Constraint], state_dimen: int, action_dimen: int, time_horizon: int,
+                 num_rollouts: int, num_elites: int, num_iterations: int, num_processes: int = 1):
+        self._action_dimen = action_dimen
+        self._time_horizon = time_horizon
+        self._num_rollouts = num_rollouts
+        self._num_elites = num_elites
+        self._num_iterations = num_iterations
+        self._rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
+        self._process_pool = Pool(num_processes) if num_processes > 1 else None
+
     def find_trajectory(self, initial_state):
         means = torch.zeros((self._time_horizon, self._action_dimen))
         stds = torch.ones((self._time_horizon, self._action_dimen))
-        ts_by_time = []
+        rollouts_by_time = []
         for i in range(self._num_iterations):
-            ts = [self._sample_trajectory(initial_state, means, stds) for _ in range(self._num_rollouts)]
-            costs = [(aes, self._compute_constraint_cost(t, aes)) for (t, aes) in ts]
+            rollouts = self._perform_rollouts(initial_state, means, stds)
+            elite_rollouts = sorted(rollouts, key=lambda x: x[2])[:self._num_elites]
+            elite_actions = torch.stack([actions for _, actions, _ in elite_rollouts])
 
-            costs.sort(key=lambda x: x[1])
-            elites = [aes for aes, _ in costs[:self._num_elites]]
-            elite_aes = torch.stack(elites)
+            means = elite_actions.mean(dim=0)
+            stds = elite_actions.std(dim=0)
 
-            means = elite_aes.mean(dim=0)
-            stds = elite_aes.std(dim=0)
-
-            ts_by_time.append([x[0] for x in ts])
+            rollouts_by_time.append(rollouts)
 
         # TODO: Check that trajectory satisfies all constraints.
         # Need to do some intelligent combination of iterating and restarting until objective function is good
         # and constraints are satisfied.
 
-        return ts_by_time
+        return rollouts_by_time
+
+    def _perform_rollouts(self, initial_state, means, stds):
+        if self._process_pool is not None:
+            return self._process_pool.map(self._rollout_function.perform_rollout,
+                                          [(initial_state, means, stds) for _ in range(self._num_rollouts)])
+        else:
+            return [self._rollout_function.perform_rollout(initial_state, means, stds) for _ in
+                    range(self._num_rollouts)]
