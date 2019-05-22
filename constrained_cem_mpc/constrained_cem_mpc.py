@@ -18,11 +18,25 @@ class TorchPolytope:
     def __init__(self, polytope: Polytope):
         self._A = torch.tensor(polytope.A)
         self._b = torch.tensor(polytope.b)
+        self.dim = polytope.dim
         self.chebXc = torch.tensor(polytope.chebXc)
 
     def __contains__(self, x: Tensor):
-        assert isinstance(x, Tensor), 'Expected tensor, got {x}'
+        assert_shape(x, (self.dim,))
         return len((torch.matmul(self._A, x) - self._b > 0).nonzero()) == 0
+
+    def contains_points(self, xs: Tensor) -> int:
+        """Returns the number of the given points which are inside the polytope
+        :param xs [N x dim]
+        """
+        assert len(xs.shape) == 2 and xs.shape[1] == self.dim
+        num_points = xs.shape[0]
+        B = self._b.repeat(num_points, 1).transpose(0, 1)
+        res = torch.matmul(self._A, xs.transpose(0, 1)) - B
+        indices_of_positives = (res > 0).nonzero()
+        columns_of_positives = indices_of_positives[:, 1]
+        points_outside = len(columns_of_positives.unique())
+        return num_points - points_outside
 
     def plot(self, *args, **kwargs):
         Polytope(self._A.numpy(), self._b.numpy()).plot(*args, **kwargs)
@@ -69,14 +83,10 @@ class ObstaclesConstraint(Constraint):
     def __call__(self, trajectory, actions) -> float:
         # NB: only checks the states at each timestep, not the "lines" between them.
         # I'm not quite sure what we need for the final implementation.
-
-        cost = 0
-        for state in trajectory:
-            for obstacle in self._obstacles:
-                if state in obstacle:
-                    cost += 3
-
-        return cost
+        unsafe_points = 0
+        for obstacle in self._obstacles:
+            unsafe_points += obstacle.contains_points(trajectory)
+        return 3 * unsafe_points
 
 
 class ActionConstraint(Constraint):
@@ -88,11 +98,8 @@ class ActionConstraint(Constraint):
         self._penalty = penalty
 
     def __call__(self, trajectory, actions) -> float:
-        cost = 0
-        for action in actions:
-            if action not in self._self_region:
-                cost += self._penalty
-        return cost
+        num_safe_actions = self._self_region.contains_points(actions)
+        return self._penalty * (actions.shape[0] - num_safe_actions)
 
 
 class RolloutFunction:
@@ -180,5 +187,5 @@ class ConstrainedCemMpc:
             return self._process_pool.map(self._rollout_function.perform_rollout,
                                           [(initial_state, means, stds) for _ in range(self._num_rollouts)])
         else:
-            return [self._rollout_function.perform_rollout(initial_state, means, stds) for _ in
+            return [self._rollout_function.perform_rollout((initial_state, means, stds)) for _ in
                     range(self._num_rollouts)]

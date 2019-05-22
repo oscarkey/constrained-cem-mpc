@@ -89,6 +89,23 @@ class TestTorchPolytope:
         torch_polytope = box2torchpoly([[0, 1], [0, 1]])
         assert torch.tensor([0.5, 0.5], dtype=torch.float64) in torch_polytope
 
+    def test__contains_points__contains_no_points__returns_correct_count(self):
+        torch_polytope = box2torchpoly([[0, 10], [0, 10]])
+        points = torch.tensor([[11, 15], [-1, 0]], dtype=torch.double)
+
+        count = torch_polytope.contains_points(points)
+
+        assert count == 0
+
+    def test__contains_points__contains_some_points__returns_correct_count(self):
+        torch_polytope = box2torchpoly([[0, 10], [0, 10]])
+        points = torch.tensor([[1, 1], [1, 2], [5, 6], [11, 11], [-10, -2]], dtype=torch.double)
+
+        count = torch_polytope.contains_points(points)
+
+        assert count == 3
+
+
     def test__chebXc__is_tensor(self):
         torch_polytope = box2torchpoly([[0, 1], [0, 1]])
         assert isinstance(torch_polytope.chebXc, torch.Tensor)
@@ -98,6 +115,12 @@ class TestTorchPolytope:
         torch_polytope = TorchPolytope(np_polytope)
 
         assert np.array_equal(torch_polytope.chebXc.numpy(), np_polytope.chebXc)
+
+    def test__dim__equal_to_input_polytype(self):
+        np_polytope = polytope.box2poly([[0, 1], [0, 1]])
+        torch_polytope = TorchPolytope(np_polytope)
+
+        assert torch_polytope.dim == np_polytope.dim
 
 
 STATE_DIMEN = 2
