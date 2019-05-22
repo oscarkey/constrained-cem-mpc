@@ -60,10 +60,10 @@ def main():
     torch.set_default_dtype(torch.float64)
 
     constraints = [TerminalConstraint(terminal_constraint),  #
-                   ObstaclesConstraint(obstacle_constraints),  #
+                   StateConstraint(safe_area),  #
                    ActionConstraint(box2torchpoly([[-1, 1], [-1, 1]]))]
-    mpc = ConstrainedCemMpc(dynamics, constraints, state_dimen, action_dimen, time_horizon=15, num_rollouts=200,
-                            num_elites=10, num_iterations=200, num_processes=2)
+    mpc = ConstrainedCemMpc(dynamics, constraints, state_dimen, action_dimen, time_horizon=15, num_rollouts=100,
+                            num_elites=10, num_iterations=100, num_workers=2)
     rollouts_by_time = mpc.find_trajectory(torch.tensor([0.5, 0.5]))
 
     # for t in range(0, len(ts_by_time), 10):

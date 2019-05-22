@@ -153,14 +153,14 @@ class RolloutFunction:
 class ConstrainedCemMpc:
 
     def __init__(self, dynamics_func, constraints: [Constraint], state_dimen: int, action_dimen: int, time_horizon: int,
-                 num_rollouts: int, num_elites: int, num_iterations: int, num_processes: int = 1):
+                 num_rollouts: int, num_elites: int, num_iterations: int, num_workers: int = 0):
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
         self._num_rollouts = num_rollouts
         self._num_elites = num_elites
         self._num_iterations = num_iterations
         self._rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
-        self._process_pool = Pool(num_processes) if num_processes > 1 else None
+        self._process_pool = Pool(num_workers) if num_workers > 0 else None
 
     def find_trajectory(self, initial_state):
         means = torch.zeros((self._time_horizon, self._action_dimen))
