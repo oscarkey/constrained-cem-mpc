@@ -227,8 +227,6 @@ class ConstrainedCemMpc:
         Otherwise, return rollouts sorted by constraint cost.
         """
         feasible = [rollout for rollout in rollouts if rollout.constraint_cost == 0]
-        print(rollouts[0].constraint_cost)
-        print('feasible', len(feasible), len(rollouts))
         if len(feasible) >= self._num_elites:
             return sorted(feasible, key=lambda rollout: rollout.objective_cost)[:self._num_elites]
         else:
