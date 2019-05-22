@@ -1,9 +1,10 @@
 import numpy as np
 import torch
 from polytope import polytope
+from torch import Tensor
 
 from constrained_cem_mpc import TerminalConstraint, StateConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
-    RolloutFunction, Constraint
+    RolloutFunction, Constraint, ConstrainedCemMpc, Rollout
 
 
 class TestTerminalConstraint:
@@ -103,7 +104,6 @@ class TestTorchPolytope:
 
         assert count == 3
 
-
     def test__chebXc__is_tensor(self):
         torch_polytope = box2torchpoly([[0, 1], [0, 1]])
         assert isinstance(torch_polytope.chebXc, torch.Tensor)
@@ -126,7 +126,7 @@ ACTION_DIMEN = 2
 TIME_HORIZON = 3
 
 
-class TestConstraint(Constraint):
+class FakeConstraint(Constraint):
     def __call__(self, trajectory, actions) -> float:
         if trajectory[-1][0].item() == 1 and trajectory[-1][1].item() == 1:
             return 5.0
@@ -187,11 +187,31 @@ class TestRolloutFunction:
 
     def test__perform_rollout__cost_correct(self):
         _, initial_state, means, stds = self._set_up()
-        func = RolloutFunction(self._dynamics_function, [TestConstraint()], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
+        func = RolloutFunction(self._dynamics_function, [FakeConstraint()], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
 
         rollout = func.perform_rollout((initial_state, means, stds))
 
         assert rollout.constraint_cost == 5
 
+
+class FakeRolloutFunction(RolloutFunction):
+    def __init__(self):
+        super().__init__(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=3)
+
+    def perform_rollout(self, args: (Tensor, Tensor, Tensor)) -> Rollout:
+        initial_state, means, std = args
+        return Rollout(torch.tensor([[0, 0], [0, 0], [0, 0], [0, 0]], dtype=torch.double),
+                       torch.tensor([[0, 0], [0, 0], [0, 0]], dtype=torch.double), 0.0)
+
+
 class TestConstrainedCemMpc:
-    pass
+
+    def test__optimize_trajectories__does_not_crash(self):
+        self._create_mpc().optimize_trajectories(torch.tensor([0.0, 0.0]))
+
+    def _dynamics_func(self, state, action):
+        return state + action
+
+    def _create_mpc(self):
+        return ConstrainedCemMpc(self._dynamics_func, constraints=[], state_dimen=2, action_dimen=2, time_horizon=3,
+                                 num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0, rollout_function=None)

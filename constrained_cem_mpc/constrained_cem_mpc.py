@@ -162,14 +162,18 @@ class ConstrainedCemMpc:
 
         :param num_workers If >0, we will spawn worker processes to compute the rollouts. Otherwise, we will compute the
         rollouts in a single thread in this process.
+        :param rollout_function Only set this in unit tests, normally it we be created automatically.
         """
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
         self._num_rollouts = num_rollouts
         self._num_elites = num_elites
         self._num_iterations = num_iterations
-        self._rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
         self._process_pool = Pool(num_workers) if num_workers > 0 else None
+
+        if rollout_function is None:
+            rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
+        self._rollout_function = rollout_function
 
     def optimize_trajectories(self, initial_state: Tensor) -> [[Rollout]]:
         """Performs stochastic rollouts and optimises them using CEM, subject to the constraints.
