@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import namedtuple
+from typing import Union
 
 import torch
 import torch.nn.functional as F
@@ -206,10 +207,6 @@ class ConstrainedCemMpc:
 
             rollouts_by_time.append(rollouts)
 
-        # TODO: Check that trajectory satisfies all constraints.
-        # Need to do some intelligent combination of iterating and restarting until objective function is good
-        # and constraints are satisfied.
-
         return rollouts_by_time
 
     def _perform_rollouts(self, initial_state, means, stds) -> [Rollout]:
@@ -231,3 +228,19 @@ class ConstrainedCemMpc:
             return sorted(feasible, key=lambda rollout: rollout.objective_cost)[:self._num_elites]
         else:
             return sorted(rollouts, key=lambda x: x.constraint_cost)[:self._num_elites]
+
+    def get_action(self, state: Tensor) -> Union[Tensor, None]:
+        """Computes and returns the approximately optimal action to take from the given state, if we can find one.
+
+        The action is guaranteed to be safe wrt to the constraints.
+
+        :return the action, or None if we didn't find a safe action
+        """
+        # TODO: Add retries.
+        rollouts = self.optimize_trajectories(state)[-1]
+        feasible_rollouts = [rollout for rollout in rollouts if rollout.constraint_cost == 0]
+        if len(feasible_rollouts) > 0:
+            best_rollout = sorted(feasible_rollouts, key=lambda rollout: rollout.objective_cost)[0]
+            return best_rollout.actions[0]
+        else:
+            return None
