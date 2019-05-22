@@ -1,10 +1,13 @@
 import numpy as np
 import torch
 from polytope import polytope
-from torch import Tensor
 
 from constrained_cem_mpc import TerminalConstraint, StateConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
     RolloutFunction, Constraint, ConstrainedCemMpc, Rollout
+
+
+def setup_module():
+    torch.set_default_dtype(torch.double)
 
 
 class TestTerminalConstraint:
@@ -141,7 +144,9 @@ class TestRolloutFunction:
         return state + action
 
     def _set_up(self):
-        func = RolloutFunction(self._dynamics_function, [], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
+        objective_cost_func = lambda x, y: 0
+        func = RolloutFunction(self._dynamics_function, objective_cost_func, [], STATE_DIMEN, ACTION_DIMEN,
+                               TIME_HORIZON)
         initial_state = torch.tensor([0, 0], dtype=torch.double)
         means = torch.tensor([[1, 0], [0, 1], [0, 0]], dtype=torch.double)
         stds = torch.zeros((TIME_HORIZON, ACTION_DIMEN), dtype=torch.double)
@@ -185,33 +190,83 @@ class TestRolloutFunction:
         assert actions[2][0] == 0
         assert actions[2][1] == 0
 
-    def test__perform_rollout__cost_correct(self):
+    def test__perform_rollout__objective_cost_correct(self):
         _, initial_state, means, stds = self._set_up()
-        func = RolloutFunction(self._dynamics_function, [FakeConstraint()], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
+        objective_cost_func = lambda x, y: 15
+        func = RolloutFunction(self._dynamics_function, objective_cost_func, [FakeConstraint()], STATE_DIMEN,
+                               ACTION_DIMEN, TIME_HORIZON)
+
+        rollout = func.perform_rollout((initial_state, means, stds))
+
+        assert rollout.objective_cost == 15
+
+    def test__perform_rollout__constraint_cost_correct(self):
+        _, initial_state, means, stds = self._set_up()
+        objective_cost_func = lambda x, y: 0
+        func = RolloutFunction(self._dynamics_function, objective_cost_func, [FakeConstraint()], STATE_DIMEN,
+                               ACTION_DIMEN, TIME_HORIZON)
 
         rollout = func.perform_rollout((initial_state, means, stds))
 
         assert rollout.constraint_cost == 5
 
 
-class FakeRolloutFunction(RolloutFunction):
-    def __init__(self):
-        super().__init__(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=3)
-
-    def perform_rollout(self, args: (Tensor, Tensor, Tensor)) -> Rollout:
-        initial_state, means, std = args
-        return Rollout(torch.tensor([[0, 0], [0, 0], [0, 0], [0, 0]], dtype=torch.double),
-                       torch.tensor([[0, 0], [0, 0], [0, 0]], dtype=torch.double), 0.0)
-
-
 class TestConstrainedCemMpc:
+    def test__optimize_trajectories__rollouts_fail_constraints__one_step_opt_correct(self, mocker):
+        # Set objective cost inverse to constraint cost, to check it orders by constraint cost.
+        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[10.0, 0.0]]), 8, 3)
+        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[1.0, 0.0]]), 9, 2)
+        rollout3 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[3.0, 0.0]]), 10, 1)
+        rolloutx = Rollout(torch.tensor([[0, 0], [100, 0]]), torch.tensor([[100.0, 0.0]]), 20, 20)
 
-    def test__optimize_trajectories__does_not_crash(self):
-        self._create_mpc().optimize_trajectories(torch.tensor([0.0, 0.0]))
+        rollout_function = mocker.Mock()
+        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3, rolloutx, rolloutx, rolloutx]
 
-    def _dynamics_func(self, state, action):
-        return state + action
+        mpc = self._create_mpc(rollout_function)
 
-    def _create_mpc(self):
-        return ConstrainedCemMpc(self._dynamics_func, constraints=[], state_dimen=2, action_dimen=2, time_horizon=3,
-                                 num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0, rollout_function=None)
+        mpc.optimize_trajectories(torch.tensor([0, 0]))
+
+        args = [call.args for call in rollout_function.perform_rollout.call_args_list]
+        # We expect it to take mean and std of the 2nd and 3rd rollouts, and use these on the next step.
+        # The next step should be the 4th call to the function.
+        initial_state, means, stds = rollout_function.perform_rollout.call_args_list[4][0][0]
+        assert means[0][0].item() == 2
+        assert means[0][1].item() == 0
+
+        # ddof=1 because Pytorch using Bessel correction but numpy does not.
+        # https://github.com/pytorch/pytorch/issues/1082
+        assert np.isclose(stds[0][0].item(), np.std([1.0, 3.0], ddof=1))
+
+        assert stds[0][1] == 0
+
+    def test__optimize_trajectories__rollouts_pass_constraints__one_step_opt_correct(self, mocker):
+        # Set constraint cost to 0 as all rollouts pass constraints
+        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[10.0, 0.0]]), 8, 0)
+        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[1.0, 0.0]]), 10, 0)
+        rollout3 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[2.0, 0.0]]), 9, 0)
+        rolloutx = Rollout(torch.tensor([[0, 0], [100, 0]]), torch.tensor([[100.0, 0.0]]), 20, 0)
+
+        rollout_function = mocker.Mock()
+        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3, rolloutx, rolloutx, rolloutx]
+
+        mpc = self._create_mpc(rollout_function)
+
+        mpc.optimize_trajectories(torch.tensor([0, 0]))
+
+        args = [call.args for call in rollout_function.perform_rollout.call_args_list]
+        # We expect it to take mean and std of the 1st and 3rd rollouts, and use these on the next step.
+        # The next step should be the 4th call to the function.
+        initial_state, means, stds = rollout_function.perform_rollout.call_args_list[4][0][0]
+        assert means[0][0].item() == 6
+        assert means[0][1].item() == 0
+
+        # ddof=1 because Pytorch using Bessel correction but numpy does not.
+        # https://github.com/pytorch/pytorch/issues/1082
+        assert np.isclose(stds[0][0].item(), np.std([10.0, 2.0], ddof=1))
+
+        assert stds[0][1] == 0
+
+    def _create_mpc(self, rollout_function):
+        return ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
+                                 time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=2, num_workers=0,
+                                 rollout_function=rollout_function)
