@@ -151,7 +151,8 @@ class TestRolloutFunction:
     def test__perform_rollout__trajectory_correct(self):
         func, initial_state, means, stds = self._set_up()
 
-        trajectory, _, _ = func.perform_rollout((initial_state, means, stds))
+        rollout = func.perform_rollout((initial_state, means, stds))
+        trajectory = rollout.trajectory
 
         assert trajectory.shape == (TIME_HORIZON + 1, STATE_DIMEN)
 
@@ -170,7 +171,8 @@ class TestRolloutFunction:
     def test__perform_rollout__actions_correct(self):
         func, initial_state, means, stds = self._set_up()
 
-        _, actions, _ = func.perform_rollout((initial_state, means, stds))
+        rollout = func.perform_rollout((initial_state, means, stds))
+        actions = rollout.actions
 
         assert actions.shape == (TIME_HORIZON, ACTION_DIMEN)
 
@@ -187,6 +189,9 @@ class TestRolloutFunction:
         _, initial_state, means, stds = self._set_up()
         func = RolloutFunction(self._dynamics_function, [TestConstraint()], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
 
-        _, _, cost = func.perform_rollout((initial_state, means, stds))
+        rollout = func.perform_rollout((initial_state, means, stds))
 
-        assert cost == 5
+        assert rollout.constraint_cost == 5
+
+class TestConstrainedCemMpc:
+    pass

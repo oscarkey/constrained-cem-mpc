@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections import namedtuple
 
 import torch
 import torch.nn.functional as F
@@ -27,6 +28,7 @@ class TorchPolytope:
 
     def contains_points(self, xs: Tensor) -> int:
         """Returns the number of the given points which are inside the polytope
+
         :param xs [N x dim]
         """
         assert len(xs.shape) == 2 and xs.shape[1] == self.dim
@@ -98,6 +100,9 @@ class ActionConstraint(Constraint):
         return self._penalty * (actions.shape[0] - num_safe_actions)
 
 
+Rollout = namedtuple('Rollout', 'trajectory actions constraint_cost')
+
+
 class RolloutFunction:
     """Computes rollouts (trajectory, action sequence, cost) given an initial state and parameters.
 
@@ -112,17 +117,19 @@ class RolloutFunction:
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
 
-    def perform_rollout(self, args: (Tensor, Tensor, Tensor)) -> (Tensor, Tensor, float):
+    def perform_rollout(self, args: (Tensor, Tensor, Tensor)) -> Rollout:
         """Samples a trajectory, and returns the trajectory and the cost.
+
         :return (sequence of states, sequence of actions, cost)
         """
         initial_state, means, stds = args
         trajectory, actions = self._sample_trajectory(initial_state, means, stds)
-        cost = self._compute_constraint_cost(trajectory, actions)
-        return trajectory, actions, cost
+        constraint_cost = self._compute_constraint_cost(trajectory, actions)
+        return Rollout(trajectory, actions, constraint_cost)
 
     def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> (Tensor, Tensor):
         """Randomly samples T actions and computes the trajectory.
+
         :return (sequence of states, sequence of actions)
         """
         assert_shape(initial_state, (self._state_dimen,))
@@ -149,7 +156,13 @@ class RolloutFunction:
 class ConstrainedCemMpc:
 
     def __init__(self, dynamics_func, constraints: [Constraint], state_dimen: int, action_dimen: int, time_horizon: int,
-                 num_rollouts: int, num_elites: int, num_iterations: int, num_workers: int = 0):
+                 num_rollouts: int, num_elites: int, num_iterations: int, num_workers: int = 0,
+                 rollout_function: RolloutFunction = None):
+        """Creates a new instance.
+
+        :param num_workers If >0, we will spawn worker processes to compute the rollouts. Otherwise, we will compute the
+        rollouts in a single thread in this process.
+        """
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
         self._num_rollouts = num_rollouts
@@ -158,14 +171,19 @@ class ConstrainedCemMpc:
         self._rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
         self._process_pool = Pool(num_workers) if num_workers > 0 else None
 
-    def find_trajectory(self, initial_state):
+    def optimize_trajectories(self, initial_state: Tensor) -> [[Rollout]]:
+        """Performs stochastic rollouts and optimises them using CEM, subject to the constraints.
+
+        :return A list of lists where each inner list is all the rollouts from a single optimisation step. The final
+        step is last in the outer list.
+        """
         means = torch.zeros((self._time_horizon, self._action_dimen))
         stds = torch.ones((self._time_horizon, self._action_dimen))
         rollouts_by_time = []
         for i in range(self._num_iterations):
             rollouts = self._perform_rollouts(initial_state, means, stds)
-            elite_rollouts = sorted(rollouts, key=lambda x: x[2])[:self._num_elites]
-            elite_actions = torch.stack([actions for _, actions, _ in elite_rollouts])
+            elite_rollouts = sorted(rollouts, key=lambda x: x.constraint_cost)[:self._num_elites]
+            elite_actions = torch.stack([rollout.actions for rollout in elite_rollouts])
 
             means = elite_actions.mean(dim=0)
             stds = elite_actions.std(dim=0)
@@ -178,7 +196,7 @@ class ConstrainedCemMpc:
 
         return rollouts_by_time
 
-    def _perform_rollouts(self, initial_state, means, stds):
+    def _perform_rollouts(self, initial_state, means, stds) -> [Rollout]:
         if self._process_pool is not None:
             return self._process_pool.map(self._rollout_function.perform_rollout,
                                           [(initial_state, means, stds) for _ in range(self._num_rollouts)])
