@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from polytope import polytope
 
-from constrained_cem_mpc import TerminalConstraint, ObstaclesConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
+from constrained_cem_mpc import TerminalConstraint, StateConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
     RolloutFunction, Constraint
 
 
@@ -28,23 +28,21 @@ class TestTerminalConstraint:
         assert cost == 0
 
 
-class TestObstaclesConstraint:
-    def test__misses_obstacle__returns_zero(self):
-        obstacle1 = box2torchpoly([[1, 2], [1, 2]])
-        obstacle2 = box2torchpoly([[2, 3], [2, 3]])
-        func = ObstaclesConstraint([obstacle1, obstacle2])
-        trajectory = torch.tensor([[0, 0], [0.5, 0.5]], dtype=torch.double)
+class TestStateConstraint:
+    def test__inside_safe_area__returns_zero(self):
+        safe_area = box2torchpoly([[0, 10], [0, 10]])
+        func = StateConstraint(safe_area)
+        trajectory = torch.tensor([[0, 0], [0.5, 0.5], [9, 10]], dtype=torch.double)
 
         cost = func(trajectory, actions=None)
 
         assert cost == 0
 
-    def test__hits_obstacle__returns_high_cost(self):
-        obstacle1 = box2torchpoly([[1, 2], [1, 2]])
-        obstacle2 = box2torchpoly([[2, 3], [2, 3]])
-        func = ObstaclesConstraint([obstacle1, obstacle2])
-        # Miss the first obstacle, hit the second.
-        trajectory = torch.tensor([[0, 0], [2.5, 0], [2.5, 2.5]], dtype=torch.double)
+    def test__states_in_unsafe_area__returns_high_cost(self):
+        safe_area = box2torchpoly([[0, 10], [0, 10]])
+        func = StateConstraint(safe_area)
+        # Have one point outside the safe area.
+        trajectory = torch.tensor([[0, 0], [11, 11], [2.5, 2.5]], dtype=torch.double)
 
         cost = func(trajectory, actions=None)
 

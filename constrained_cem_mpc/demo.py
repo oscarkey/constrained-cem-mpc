@@ -1,8 +1,9 @@
 import matplotlib.pyplot as plt
 import torch
+from polytope import polytope
 
-from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint, ObstaclesConstraint, ActionConstraint, \
-    box2torchpoly
+from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint, StateConstraint, ActionConstraint, box2torchpoly, \
+    TorchPolytope
 from utils import assert_shape
 
 state_dimen = 2
@@ -15,8 +16,8 @@ y_max = 10
 #                         polytope.box2poly([[x_max, x_max + 1], [0, y_max]]),  #
 #                         polytope.box2poly([[0, x_max], [-1, 0]]),  #
 #                         polytope.box2poly([[0, x_max], [y_max, y_max + 1]])]
-obstacle_constraints = [box2torchpoly([[2, 7], [2, 7]])]
-terminal_constraint = box2torchpoly([[7, 8], [7, 8]])
+safe_area = box2torchpoly([[0, 10], [0, 10]])
+terminal_constraint = box2torchpoly([[9, 10], [9, 10]])
 
 
 def dynamics(s, a):
@@ -43,8 +44,7 @@ def plot_trajs(ts, axes=None):
     axes.set_xticks([0, x_max])
     axes.set_yticks([0, y_max])
 
-    for obstacle_constraint in obstacle_constraints:
-        obstacle_constraint.plot(ax=axes)
+    safe_area.plot(ax=axes)
     terminal_constraint.plot(ax=axes)
 
     for t in ts:

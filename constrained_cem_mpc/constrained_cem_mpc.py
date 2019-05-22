@@ -73,20 +73,16 @@ class TerminalConstraint(Constraint):
             return 0
 
 
-class ObstaclesConstraint(Constraint):
-    """Represents obstacles that the trajectory must avoid (i.e. constraint on all states)."""
+class StateConstraint(Constraint):
+    """Represents the safe area that the trajectory must remain inside."""
 
-    def __init__(self, obstacles: [TorchPolytope]) -> None:
+    def __init__(self, safe_area: TorchPolytope) -> None:
         super().__init__()
-        self._obstacles = obstacles
+        self._safe_area = safe_area
 
     def __call__(self, trajectory, actions) -> float:
-        # NB: only checks the states at each timestep, not the "lines" between them.
-        # I'm not quite sure what we need for the final implementation.
-        unsafe_points = 0
-        for obstacle in self._obstacles:
-            unsafe_points += obstacle.contains_points(trajectory)
-        return 3 * unsafe_points
+        safe_points = self._safe_area.contains_points(trajectory)
+        return 3 * (trajectory.shape[0] - safe_points)
 
 
 class ActionConstraint(Constraint):
