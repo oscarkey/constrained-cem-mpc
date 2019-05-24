@@ -14,5 +14,5 @@ NV_GPU="$gpu" ${cmd} run -d \
         --net host \
         --name ${2} \
         -v `pwd`/:$DIR:rw \
-        -t oscar-cem-$USER \
+        -t constrained-cem-$USER \
         ${@:3}

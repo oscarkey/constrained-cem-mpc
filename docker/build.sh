@@ -8,4 +8,4 @@ else
   CMD=docker
 fi
 
-$CMD build -f docker/Dockerfile -t oscar-cem-$USER --build-arg UID=$UID .
+$CMD build -f docker/Dockerfile -t constrained-cem-$USER --build-arg UID=$UID .
