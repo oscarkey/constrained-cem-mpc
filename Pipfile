@@ -13,6 +13,7 @@ ipykernel = "*"
 pytest = "*"
 pytest-mock = "*"
 gym = "*"
+polytope = "*"
 
 [requires]
 python_version = "3.7"

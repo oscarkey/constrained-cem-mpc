@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "6a300ab054079d1083c4f6961191a2a90b4af519a2ee74d327614cc575cb0dc3"
+            "sha256": "9cc0df843fe50ee7d2105b7e6663f280c214216f97a2f6e7d92ccf561eb3eb0a"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -192,6 +192,12 @@
             "markers": "python_version > '2.7'",
             "version": "==7.0.0"
         },
+        "networkx": {
+            "hashes": [
+                "sha256:8311ddef63cf5c5c5e7c1d0212dd141d9a1fe3f474915281b73597ed5f1d4e3d"
+            ],
+            "version": "==2.3"
+        },
         "numpy": {
             "hashes": [
                 "sha256:0e2eed77804b2a6a88741f8fcac02c5499bba3953ec9c71e8b217fad4912c56c",
@@ -249,6 +255,13 @@
                 "sha256:964cedd2b27c492fbf0b7f58b3284a09cf7f99b0f715941fb24a439b3af1bd1a"
             ],
             "version": "==0.11.0"
+        },
+        "polytope": {
+            "hashes": [
+                "sha256:6593c086a8b09a3278472c8cc815441498251c24c71e8c4471728bed81ba4df3"
+            ],
+            "index": "pypi",
+            "version": "==0.2.1"
         },
         "prompt-toolkit": {
             "hashes": [
