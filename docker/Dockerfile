@@ -62,6 +62,6 @@ WORKDIR /project/app
 ENV LC_ALL C.UTF-8
 ENV LANG C.UTF-8
 
-RUN set -ex && pipenv install --deploy --system
+RUN pipenv install && pipenv shell
 
 #ENV PYTHONPATH "$PYTHONPATH:/project/"
