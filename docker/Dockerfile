@@ -17,18 +17,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          cmake \
          git \
          curl \
+         wget \
          sudo \
          vim \
          tmux \
          ca-certificates \
          libjpeg-dev \
-         python-opencv \
          libpng-dev \
-         python3.7-dev \
-         libffi-dev&&\
+         software-properties-common \
+         && \
      rm -rf /var/lib/apt/lists/*
 
-RUN curl --silent https://bootstrap.pypa.io/get-pip.py | python3.7
+RUN add-apt-repository -y ppa:deadsnakes/ppa
+RUN apt-get update
+RUN apt-get install -y --no-install-recommends python3.7-dev
 
 #RUN curl -o ~/miniconda.sh -O  https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh  && \
 #     chmod +x ~/miniconda.sh && \
@@ -47,7 +49,15 @@ RUN useradd -d /project -u $UID --create-home user && echo "user:pass" | chpassw
 
 USER user
 WORKDIR /project/
-ADD . /project/
+RUN mkdir /project/app
+ADD . /project/app
+WORKDIR /project/app
+
+RUN curl --silent https://bootstrap.pypa.io/get-pip.py | python3.7
+# Fix unicode for pipenv
+ENV LC_ALL C.UTF-8
+ENV LANG C.UTF-8
+RUN pip3 install pipenv
 
 ONBUILD RUN set -ex && pipenv install --deploy --system
 
