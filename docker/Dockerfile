@@ -50,18 +50,17 @@ RUN pip3 install pipenv
 # <<UID>> will be replaced by user id
 RUN useradd -d /project -u $UID --create-home user && echo "user:pass" | chpasswd && adduser user sudo
 
+RUN mkdir /project/app
+ADD . /project/app
+
+RUN chown -R user:user /project
+
 USER user
+WORKDIR /project/app
 
 # Fix unicode for pipenv
 ENV LC_ALL C.UTF-8
 ENV LANG C.UTF-8
-
-WORKDIR /project/
-RUN mkdir /project/app
-ADD . /project/app
-WORKDIR /project/app
-
-RUN chown -R user:user /project
 
 RUN set -ex && pipenv install --deploy --system
 
