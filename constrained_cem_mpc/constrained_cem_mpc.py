@@ -32,7 +32,7 @@ class TorchPolytope:
 
         :param xs [N x dim]
         """
-        assert len(xs.shape) == 2 and xs.shape[1] == self.dim
+        assert len(xs.shape) == 2 and xs.shape[1] == self.dim, f'Wanted (N, {self.dim}) got {xs.shape}'
         num_points = xs.shape[0]
         B = self._b.repeat(num_points, 1).transpose(0, 1)
         res = torch.matmul(self._A, xs.transpose(0, 1)) - B

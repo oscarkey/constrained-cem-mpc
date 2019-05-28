@@ -1,9 +1,11 @@
+import time
+
 import gym
 import numpy as np
 import torch
 from torch import Tensor
 
-from constrained_cem_mpc import ConstrainedCemMpc, ActionConstraint, box2torchpoly, TerminalConstraint
+from constrained_cem_mpc import ConstrainedCemMpc, ActionConstraint, box2torchpoly, TerminalConstraint, StateConstraint
 
 
 def angle_normalize(x):
@@ -33,14 +35,18 @@ def nil_objective(_1, _2):
     return 0
 
 
-def objective(states, actions):
-    return (states[:, 0] > 1).sum()
-
-
 def observation_to_state(observation: (float, float, float)) -> Tensor:
     th = np.arccos(observation[0])
     thdot = observation[2]
     return torch.tensor([th, thdot], dtype=torch.double)
+
+
+def reset_env(env):
+    """Resets the pendulum in the safe area."""
+    env.reset()
+    env.env.state = env.np_random.uniform(low=[-0.1, -0.5], high=[0.1, 0.5])
+    env.env.last_u = None
+    return env.env._get_obs()
 
 
 def main():
@@ -49,16 +55,20 @@ def main():
     env = gym.make('Pendulum-v0')
 
     constraints = [ActionConstraint(box2torchpoly([[-2.0, 2.0]])),  #
-                   TerminalConstraint(box2torchpoly([[0, 1], [-0.8, 0.8]]))]
-    mpc = ConstrainedCemMpc(dynamics_func=dynamics, objective_func=objective, constraints=constraints, state_dimen=2,
-                            action_dimen=1, time_horizon=10, num_rollouts=40, num_elites=8, num_iterations=5,
-                            num_workers=3)
+                   TerminalConstraint(box2torchpoly([[0, 1], [-0.8, 0.8]])),  #
+                   StateConstraint(box2torchpoly([[0, 1], [-8, 8]]))]
+    mpc = ConstrainedCemMpc(dynamics_func=dynamics, objective_func=nil_objective, constraints=constraints,
+                            state_dimen=2, action_dimen=1, time_horizon=10, num_rollouts=40, num_elites=8,
+                            num_iterations=5, num_workers=0)
 
-    observation = env.reset()
+    observation = reset_env(env)
     for i in range(400):
         env.render()
         state = observation_to_state(observation)
+        time_start = time.time()
         action = mpc.get_action(state)
+        time_end = time.time()
+        print('time in solver:', time_end - time_start)
 
         if action is None:
             if state[0] > 3:
