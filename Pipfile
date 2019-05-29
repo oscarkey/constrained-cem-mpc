@@ -6,14 +6,8 @@ verify_ssl = true
 [dev-packages]
 
 [packages]
-torch = "*"
-numpy = "*"
-matplotlib = "*"
 ipykernel = "*"
-pytest = "*"
-pytest-mock = "*"
-gym = "*"
-polytope = "*"
+constrained-cem-mpc = {editable = true,path = "."}
 
 [requires]
 python_version = "3.7"
