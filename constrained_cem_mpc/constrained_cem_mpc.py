@@ -8,7 +8,7 @@ from polytope import Polytope, polytope
 from torch import Tensor
 from torch.multiprocessing import Pool
 
-from utils import assert_shape
+from constrained_cem_mpc.utils import assert_shape
 
 
 class TorchPolytope:
