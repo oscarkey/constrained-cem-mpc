@@ -229,18 +229,19 @@ class ConstrainedCemMpc:
         else:
             return sorted(rollouts, key=lambda x: x.constraint_cost)[:self._num_elites]
 
-    def get_action(self, state: Tensor) -> Union[Tensor, None]:
-        """Computes and returns the approximately optimal action to take from the given state, if we can find one.
+    def get_actions(self, state: Tensor) -> Union[Tensor, None]:
+        """Computes the approximately optimal actions to take from the given state.
 
-        The action is guaranteed to be safe wrt to the constraints.
+        The sequence of actions is guaranteed to be safe wrt to the constraints.
 
-        :return the action, or None if we didn't find a safe action
+        :return the actions [N x action dimen], or None if we didn't find a safe sequence of actions
         """
         # TODO: Add retries.
+        # Use the rollouts from the final optimisation step.
         rollouts = self.optimize_trajectories(state)[-1]
         feasible_rollouts = [rollout for rollout in rollouts if rollout.constraint_cost == 0]
         if len(feasible_rollouts) > 0:
             best_rollout = sorted(feasible_rollouts, key=lambda rollout: rollout.objective_cost)[0]
-            return best_rollout.actions[0]
+            return best_rollout.actions
         else:
             return None

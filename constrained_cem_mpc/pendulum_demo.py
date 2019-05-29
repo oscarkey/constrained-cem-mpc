@@ -66,7 +66,7 @@ def main():
         env.render()
         state = observation_to_state(observation)
         time_start = time.time()
-        action = mpc.get_action(state)
+        action = mpc.get_actions(state)
         time_end = time.time()
         print('time in solver:', time_end - time_start)
 

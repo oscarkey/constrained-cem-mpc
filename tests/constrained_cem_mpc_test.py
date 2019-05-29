@@ -283,11 +283,11 @@ class TestConstrainedCemMpc:
                                 time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0,
                                 rollout_function=rollout_function)
 
-        action = mpc.get_action(torch.tensor([0.0, 0.0]))
+        actions = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
-        assert action is None
+        assert actions is None
 
-    def test__get_action__feasible_rollouts__returns_first_action_from_best(self, mocker):
+    def test__get_action__feasible_rollouts__returns_actions_from_best(self, mocker):
         rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
         rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
         rollout3 = Rollout(torch.tensor([[0, 0], [0, 0]]), torch.tensor([[0.0, 0.0]]), 0, 1)
@@ -302,7 +302,9 @@ class TestConstrainedCemMpc:
                                 time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=2, num_workers=0,
                                 rollout_function=rollout_function)
 
-        action = mpc.get_action(torch.tensor([0.0, 0.0]))
+        action = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
-        assert action[0] == 1.0
-        assert action[1] == 1.5
+        assert action[0][0] == 1.0
+        assert action[0][1] == 1.5
+        assert action[1][0] == 3.0
+        assert action[1][1] == 2.5
