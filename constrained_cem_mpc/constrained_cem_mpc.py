@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import namedtuple
-from typing import Union
+from typing import Union, Optional, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -30,7 +30,7 @@ class TorchPolytope:
     def contains_points(self, xs: Tensor) -> int:
         """Returns the number of the given points which are inside the polytope
 
-        :param xs [N x dim]
+        :param xs: [N x dim]
         """
         assert len(xs.shape) == 2 and xs.shape[1] == self.dim, f'Wanted (N, {self.dim}) got {xs.shape}'
         num_points = xs.shape[0]
@@ -45,7 +45,7 @@ class TorchPolytope:
         Polytope(self._A.numpy(), self._b.numpy()).plot(*args, **kwargs)
 
 
-def box2torchpoly(box: [[float]]) -> TorchPolytope:
+def box2torchpoly(box: List[List[float]]) -> TorchPolytope:
     """Similar to polytope.box2poly(), but returns a TorchPolytope."""
     return TorchPolytope(polytope.box2poly(box))
 
@@ -54,7 +54,7 @@ class Constraint(ABC):
     """Represents a constraint that the trajectory must satisfy to be valid."""
 
     @abstractmethod
-    def __call__(self, trajectory, actions) -> float:
+    def __call__(self, trajectory: Tensor, actions: Tensor) -> float:
         """Returns the (>=0) cost of the given trajectory wrt the constraints this function represents."""
         pass
 
@@ -69,7 +69,7 @@ class TerminalConstraint(Constraint):
         super().__init__()
         self._safe_area = safe_area
 
-    def __call__(self, trajectory, actions) -> float:
+    def __call__(self, trajectory: Tensor, actions: Tensor) -> float:
         if trajectory[-1] not in self._safe_area:
             return F.pairwise_distance(self._safe_area.chebXc.unsqueeze(0), trajectory[-1].unsqueeze(0))
         else:
@@ -83,7 +83,7 @@ class StateConstraint(Constraint):
         super().__init__()
         self._safe_area = safe_area
 
-    def __call__(self, trajectory, actions) -> float:
+    def __call__(self, trajectory: Tensor, actions: Tensor) -> float:
         safe_points = self._safe_area.contains_points(trajectory)
         return 3 * (trajectory.shape[0] - safe_points)
 
@@ -96,7 +96,7 @@ class ActionConstraint(Constraint):
         self._self_region = safe_region
         self._penalty = penalty
 
-    def __call__(self, trajectory, actions) -> float:
+    def __call__(self, trajectory: Tensor, actions: Tensor) -> float:
         num_safe_actions = self._self_region.contains_points(actions)
         return self._penalty * (actions.shape[0] - num_safe_actions)
 
@@ -110,8 +110,8 @@ class RolloutFunction:
     This class and all of its members are passed between processes, so should be kept lightweight.
     """
 
-    def __init__(self, dynamics_func, objective_func, constraints: [Constraint], state_dimen: int, action_dimen: int,
-                 time_horizon: int):
+    def __init__(self, dynamics_func, objective_func, constraints: List[Constraint], state_dimen: int,
+                 action_dimen: int, time_horizon: int):
         self._dynamics_func = dynamics_func
         self._objective_func = objective_func
         self._constraints = constraints
@@ -119,10 +119,10 @@ class RolloutFunction:
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
 
-    def perform_rollout(self, args: (Tensor, Tensor, Tensor)) -> Rollout:
+    def perform_rollout(self, args: Tuple[Tensor, Tensor, Tensor]) -> Rollout:
         """Samples a trajectory, and returns the trajectory and the cost.
 
-        :return (sequence of states, sequence of actions, cost)
+        :returns: (sequence of states, sequence of actions, cost)
         """
         initial_state, means, stds = args
         trajectory, actions = self._sample_trajectory(initial_state, means, stds)
@@ -132,10 +132,10 @@ class RolloutFunction:
 
         return Rollout(trajectory, actions, objective_cost, constraint_cost)
 
-    def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> (Tensor, Tensor):
+    def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> Tuple[Tensor, Tensor]:
         """Randomly samples T actions and computes the trajectory.
 
-        :return (sequence of states, sequence of actions)
+        :returns: (sequence of states, sequence of actions)
         """
         assert_shape(initial_state, (self._state_dimen,))
         assert_shape(means, (self._time_horizon, self._action_dimen))
@@ -154,7 +154,7 @@ class RolloutFunction:
 
         return trajectory_tensor, actions
 
-    def _compute_constraint_cost(self, trajectory, actions) -> float:
+    def _compute_constraint_cost(self, trajectory: Tensor, actions: Tensor) -> float:
         return sum([constraint(trajectory, actions) for constraint in self._constraints])
 
 
@@ -167,14 +167,14 @@ class ConstrainedCemMpc:
     This method is based on 'Constrained Cross-Entropy Method for Safe Reinforcement Learning', Wen, Topcu.
     """
 
-    def __init__(self, dynamics_func, objective_func, constraints: [Constraint], state_dimen: int, action_dimen: int,
-                 time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int, num_workers: int = 0,
-                 rollout_function: RolloutFunction = None):
+    def __init__(self, dynamics_func, objective_func, constraints: List[Constraint], state_dimen: int,
+                 action_dimen: int, time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int,
+                 num_workers: int = 0, rollout_function: RolloutFunction = None):
         """Creates a new instance.
 
-        :param num_workers If >0, we will spawn worker processes to compute the rollouts. Otherwise, we will compute the
+        :param num_workers: If >0, we will spawn worker processes to compute the rollouts. Otherwise, we will compute the
         rollouts in the current process and thread.
-        :param rollout_function Only set this in unit tests, normally it we be created automatically.
+        :param rollout_function: Only set this in unit tests, normally it we be created automatically.
         """
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
@@ -188,10 +188,10 @@ class ConstrainedCemMpc:
                                                time_horizon)
         self._rollout_function = rollout_function
 
-    def optimize_trajectories(self, initial_state: Tensor) -> [[Rollout]]:
+    def optimize_trajectories(self, initial_state: Tensor) -> List[List[Rollout]]:
         """Performs stochastic rollouts and optimises them using CEM, subject to the constraints.
 
-        :return A list of lists where each inner list is all the rollouts from a single optimisation step. The final
+        :returns: A list of lists where each inner list is all the rollouts from a single optimisation step. The final
         step is last in the outer list.
         """
         means = torch.zeros((self._time_horizon, self._action_dimen))
@@ -209,7 +209,7 @@ class ConstrainedCemMpc:
 
         return rollouts_by_time
 
-    def _perform_rollouts(self, initial_state, means, stds) -> [Rollout]:
+    def _perform_rollouts(self, initial_state, means, stds) -> List[Rollout]:
         if self._process_pool is not None:
             return self._process_pool.map(self._rollout_function.perform_rollout,
                                           [(initial_state, means, stds) for _ in range(self._num_rollouts)])
@@ -217,7 +217,7 @@ class ConstrainedCemMpc:
             return [self._rollout_function.perform_rollout((initial_state, means, stds)) for _ in
                     range(self._num_rollouts)]
 
-    def _select_elites(self, rollouts: [Rollout]) -> [Rollout]:
+    def _select_elites(self, rollouts: List[Rollout]) -> List[Rollout]:
         """Returns a list of the elite rollouts.
 
         If there are sufficient rollouts which satisfy the constraints, return these sorted by objective cost.
