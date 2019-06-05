@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections import namedtuple
-from typing import Union, Optional, List, Tuple
+from typing import Union, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -229,19 +229,24 @@ class ConstrainedCemMpc:
         else:
             return sorted(rollouts, key=lambda x: x.constraint_cost)[:self._num_elites]
 
-    def get_actions(self, state: Tensor) -> Union[Tensor, None]:
+    def get_actions(self, state: Tensor) -> Tuple[Union[Tensor, None], List[List[Rollout]]]:
         """Computes the approximately optimal actions to take from the given state.
 
         The sequence of actions is guaranteed to be safe wrt to the constraints.
 
-        :return the actions [N x action dimen], or None if we didn't find a safe sequence of actions
+        :param state: [state dimen], the initial state to plan from
+        :returns: (the actions [N x action dimen], or None if we didn't find a safe sequence of actions,
+        rollouts by time as returned by optimize_trajectories())
         """
         # TODO: Add retries.
+        rollouts_by_time = self.optimize_trajectories(state)
+
         # Use the rollouts from the final optimisation step.
-        rollouts = self.optimize_trajectories(state)[-1]
+        rollouts = rollouts_by_time[-1]
+
         feasible_rollouts = [rollout for rollout in rollouts if rollout.constraint_cost == 0]
         if len(feasible_rollouts) > 0:
             best_rollout = sorted(feasible_rollouts, key=lambda rollout: rollout.objective_cost)[0]
-            return best_rollout.actions
+            return best_rollout.actions, rollouts_by_time
         else:
-            return None
+            return None, rollouts_by_time

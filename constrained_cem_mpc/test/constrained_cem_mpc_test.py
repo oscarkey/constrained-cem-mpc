@@ -3,7 +3,8 @@ import torch
 from polytope import polytope
 
 from constrained_cem_mpc import TerminalConstraint, StateConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
-    RolloutFunction, Constraint, ConstrainedCemMpc, Rollout
+    Constraint, ConstrainedCemMpc, Rollout
+from constrained_cem_mpc.constrained_cem_mpc import RolloutFunction
 
 
 def setup_module():
@@ -270,7 +271,7 @@ class TestConstrainedCemMpc:
 
         assert stds[0][1] == 0
 
-    def test__get_action__no_feasible_rollout__returns_none(self, mocker):
+    def test__get_actions__no_feasible_rollout__returns_none(self, mocker):
         # All non-zero constraint costs so no rollout is feasible
         rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
         rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
@@ -283,11 +284,11 @@ class TestConstrainedCemMpc:
                                 time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0,
                                 rollout_function=rollout_function)
 
-        actions = mpc.get_actions(torch.tensor([0.0, 0.0]))
+        actions, _ = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
         assert actions is None
 
-    def test__get_action__feasible_rollouts__returns_actions_from_best(self, mocker):
+    def test__get_actions__feasible_rollouts__returns_actions_from_best(self, mocker):
         rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
         rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
         rollout3 = Rollout(torch.tensor([[0, 0], [0, 0]]), torch.tensor([[0.0, 0.0]]), 0, 1)
@@ -302,9 +303,28 @@ class TestConstrainedCemMpc:
                                 time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=2, num_workers=0,
                                 rollout_function=rollout_function)
 
-        action = mpc.get_actions(torch.tensor([0.0, 0.0]))
+        action, _ = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
         assert action[0][0] == 1.0
         assert action[0][1] == 1.5
         assert action[1][0] == 3.0
         assert action[1][1] == 2.5
+
+    def test__get_actions__returns_rollouts_by_time(self, mocker):
+        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
+        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
+        rollout3 = Rollout(torch.tensor([[0, 0], [0, 0]]), torch.tensor([[0.0, 0.0]]), 0, 1)
+
+        rollout_function = mocker.Mock()
+        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3]
+
+        mpc = ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
+                                time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0,
+                                rollout_function=rollout_function)
+
+        _, rollouts_by_time = mpc.get_actions(torch.tensor([0.0, 0.0]))
+
+        assert len(rollouts_by_time) == 1
+        assert rollouts_by_time[0][0] == rollout1
+        assert rollouts_by_time[0][1] == rollout2
+        assert rollouts_by_time[0][2] == rollout3
