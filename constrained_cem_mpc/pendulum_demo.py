@@ -1,38 +1,35 @@
 import time
+from typing import Tuple
 
 import gym
 import numpy as np
 import torch
 from torch import Tensor
 
-from constrained_cem_mpc import ConstrainedCemMpc, ActionConstraint, box2torchpoly, TerminalConstraint, StateConstraint
+from constrained_cem_mpc import ConstrainedCemMpc, ActionConstraint, box2torchpoly, TerminalConstraint, StateConstraint, \
+    DynamicsFunc
 
 
-def angle_normalize(x):
-    return (((x + np.pi) % (2 * np.pi)) - np.pi)
+class Dynamics(DynamicsFunc):
+    def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
+        th, thdot = state
 
+        max_speed = 8
+        max_torque = 2.
+        g = 10.
+        m = 1.
+        l = 1.
+        dt = .05
 
-def dynamics(state: Tensor, action: Tensor):
-    th, thdot = state
+        u = action.clamp(-max_torque, max_torque)[0]
 
-    max_speed = 8
-    max_torque = 2.
-    g = 10.
-    m = 1.
-    l = 1.
-    dt = .05
+        newthdot = thdot + (-3 * g / (2 * l) * torch.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
+        newth = th + newthdot * dt
+        newthdot = newthdot.clamp(-max_speed, max_speed)
 
-    u = action.clamp(-max_torque, max_torque)[0]
+        objective_cost = torch.tensor([0.0])
 
-    newthdot = thdot + (-3 * g / (2 * l) * torch.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
-    newth = th + newthdot * dt
-    newthdot = newthdot.clamp(-max_speed, max_speed)
-
-    return torch.tensor([newth, newthdot])
-
-
-def nil_objective(_1, _2):
-    return 0
+        return torch.tensor([newth, newthdot]), objective_cost
 
 
 def observation_to_state(observation: (float, float, float)) -> Tensor:
@@ -57,9 +54,8 @@ def main():
     constraints = [ActionConstraint(box2torchpoly([[-2.0, 2.0]])),  #
                    TerminalConstraint(box2torchpoly([[0, 1], [-0.8, 0.8]])),  #
                    StateConstraint(box2torchpoly([[0, 1], [-8, 8]]))]
-    mpc = ConstrainedCemMpc(dynamics_func=dynamics, objective_func=nil_objective, constraints=constraints,
-                            state_dimen=2, action_dimen=1, time_horizon=10, num_rollouts=40, num_elites=8,
-                            num_iterations=5, num_workers=0)
+    mpc = ConstrainedCemMpc(dynamics_func=Dynamics(), constraints=constraints, state_dimen=2, action_dimen=1,
+                            time_horizon=10, num_rollouts=40, num_elites=8, num_iterations=5, num_workers=0)
 
     observation = reset_env(env)
     for i in range(400):

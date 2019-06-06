@@ -1,9 +1,12 @@
+from typing import Tuple
+
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
+from torch import Tensor
 
 from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint, StateConstraint, ActionConstraint, box2torchpoly, \
-    Rollout
+    Rollout, DynamicsFunc
 from utils import assert_shape
 
 state_dimen = 2
@@ -23,8 +26,12 @@ def dynamics(s, a):
     return s + a
 
 
-def objective_cost(trajectory, _):
-    return F.pairwise_distance(objective_poly.chebXc.unsqueeze(0), trajectory[10].unsqueeze(0))
+class Dynamics(DynamicsFunc):
+    def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
+        assert_shape(state, (state_dimen,))
+        assert_shape(action, (action_dimen,))
+
+        return state + action, F.pairwise_distance(objective_poly.chebXc.unsqueeze(0), trajectory[10].unsqueeze(0))
 
 
 def check_intersect(t, c):
@@ -82,8 +89,8 @@ def main():
     constraints = [TerminalConstraint(terminal_constraint),  #
                    StateConstraint(safe_area),  #
                    ActionConstraint(box2torchpoly([[-1, 1], [-1, 1]]))]
-    mpc = ConstrainedCemMpc(dynamics, objective_cost, constraints, state_dimen, action_dimen, time_horizon=20,
-                            num_rollouts=400, num_elites=30, num_iterations=50, num_workers=2)
+    mpc = ConstrainedCemMpc(Dynamics(), constraints, state_dimen, action_dimen, time_horizon=20, num_rollouts=400,
+                            num_elites=30, num_iterations=50, num_workers=2)
     rollouts_by_time = mpc.optimize_trajectories(torch.tensor([0.5, 0.5]))
 
     plot_trajectories([rollout.trajectory for rollout in rollouts_by_time[-1][0:10]])

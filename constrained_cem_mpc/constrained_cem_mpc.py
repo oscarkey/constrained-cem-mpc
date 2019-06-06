@@ -101,6 +101,17 @@ class ActionConstraint(Constraint):
         return self._penalty * (actions.shape[0] - num_safe_actions)
 
 
+class DynamicsFunc(ABC):
+    def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
+        """Computes the next state and cost of the action.
+
+        :param state: [state dimen] the current state
+        :param action: [action dimen] the action to perform
+        :returns: (next state [state dimen], cost [1x0])
+        """
+        pass
+
+
 Rollout = namedtuple('Rollout', 'trajectory actions objective_cost constraint_cost')
 
 
@@ -110,10 +121,9 @@ class RolloutFunction:
     This class and all of its members are passed between processes, so should be kept lightweight.
     """
 
-    def __init__(self, dynamics_func, objective_func, constraints: List[Constraint], state_dimen: int,
-                 action_dimen: int, time_horizon: int):
-        self._dynamics_func = dynamics_func
-        self._objective_func = objective_func
+    def __init__(self, dynamics: DynamicsFunc, constraints: List[Constraint], state_dimen: int, action_dimen: int,
+                 time_horizon: int):
+        self._dynamics = dynamics
         self._constraints = constraints
         self._state_dimen = state_dimen
         self._action_dimen = action_dimen
@@ -125,14 +135,12 @@ class RolloutFunction:
         :returns: (sequence of states, sequence of actions, cost)
         """
         initial_state, means, stds = args
-        trajectory, actions = self._sample_trajectory(initial_state, means, stds)
-
-        objective_cost = self._objective_func(trajectory, actions)
+        trajectory, actions, objective_cost = self._sample_trajectory(initial_state, means, stds)
         constraint_cost = self._compute_constraint_cost(trajectory, actions)
 
         return Rollout(trajectory, actions, objective_cost, constraint_cost)
 
-    def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> Tuple[Tensor, Tensor]:
+    def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> Tuple[Tensor, Tensor, float]:
         """Randomly samples T actions and computes the trajectory.
 
         :returns: (sequence of states, sequence of actions)
@@ -145,14 +153,18 @@ class RolloutFunction:
         assert_shape(actions, (self._time_horizon, self._action_dimen))
 
         trajectory = [initial_state]
+        objective_cost = 0.0
         for a in actions:
-            trajectory.append(self._dynamics_func(trajectory[-1], a))
+            next_state, cost = self._dynamics(trajectory[-1], a)
+            trajectory.append(next_state)
+            # TODO: worry about underflow.
+            objective_cost += cost.squeeze().item()
 
         trajectory_tensor = torch.stack(trajectory)
         # One more state than _T because of the initial state.
         assert_shape(trajectory_tensor, (self._time_horizon + 1, self._state_dimen))
 
-        return trajectory_tensor, actions
+        return trajectory_tensor, actions, objective_cost
 
     def _compute_constraint_cost(self, trajectory: Tensor, actions: Tensor) -> float:
         return sum([constraint(trajectory, actions) for constraint in self._constraints])
@@ -167,9 +179,9 @@ class ConstrainedCemMpc:
     This method is based on 'Constrained Cross-Entropy Method for Safe Reinforcement Learning', Wen, Topcu.
     """
 
-    def __init__(self, dynamics_func, objective_func, constraints: List[Constraint], state_dimen: int,
-                 action_dimen: int, time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int,
-                 num_workers: int = 0, rollout_function: RolloutFunction = None):
+    def __init__(self, dynamics_func, constraints: List[Constraint], state_dimen: int, action_dimen: int,
+                 time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int, num_workers: int = 0,
+                 rollout_function: RolloutFunction = None):
         """Creates a new instance.
 
         :param num_workers: If >0, we will spawn worker processes to compute the rollouts. Otherwise, we will compute the
@@ -184,8 +196,7 @@ class ConstrainedCemMpc:
         self._process_pool = Pool(num_workers) if num_workers > 0 else None
 
         if rollout_function is None:
-            rollout_function = RolloutFunction(dynamics_func, objective_func, constraints, state_dimen, action_dimen,
-                                               time_horizon)
+            rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
         self._rollout_function = rollout_function
 
     def optimize_trajectories(self, initial_state: Tensor) -> List[List[Rollout]]:

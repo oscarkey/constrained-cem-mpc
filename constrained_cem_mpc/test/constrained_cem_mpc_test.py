@@ -1,9 +1,12 @@
+from typing import Tuple
+
 import numpy as np
 import torch
 from polytope import polytope
+from torch import Tensor
 
 from constrained_cem_mpc import TerminalConstraint, StateConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
-    Constraint, ConstrainedCemMpc, Rollout
+    Constraint, ConstrainedCemMpc, Rollout, DynamicsFunc
 from constrained_cem_mpc.constrained_cem_mpc import RolloutFunction
 
 
@@ -18,7 +21,7 @@ class TestTerminalConstraint:
         # A trajectory that passes through the terminal constraint but does not end in it.
         trajectory = torch.tensor([[0, 0], [10.5, 10.5], [0, 0]], dtype=torch.double)
 
-        cost = func(trajectory, actions=None)
+        cost = func(trajectory, actions=torch.zeros((1,)))
 
         distance = np.sqrt(np.square(10.5) + np.square(10.5))
         assert np.isclose(cost, distance)
@@ -28,7 +31,7 @@ class TestTerminalConstraint:
         func = TerminalConstraint(constraint)
         trajectory = torch.tensor([[0, 0], [0, 1], [10.5, 10.5]], dtype=torch.double)
 
-        cost = func(trajectory, actions=None)
+        cost = func(trajectory, actions=torch.zeros((1,)))
 
         assert cost == 0
 
@@ -39,7 +42,7 @@ class TestStateConstraint:
         func = StateConstraint(safe_area)
         trajectory = torch.tensor([[0, 0], [0.5, 0.5], [9, 10]], dtype=torch.double)
 
-        cost = func(trajectory, actions=None)
+        cost = func(trajectory, actions=torch.zeros((1,)))
 
         assert cost == 0
 
@@ -49,7 +52,7 @@ class TestStateConstraint:
         # Have one point outside the safe area.
         trajectory = torch.tensor([[0, 0], [11, 11], [2.5, 2.5]], dtype=torch.double)
 
-        cost = func(trajectory, actions=None)
+        cost = func(trajectory, actions=torch.zeros((1,)))
 
         assert cost >= 0
 
@@ -60,7 +63,7 @@ class TestActionConstraint:
         func = ActionConstraint(safe_area, penalty=5)
         actions = torch.tensor([[0, 0], [0.5, 0.2], [-0.9, -0.99]], dtype=torch.double)
 
-        cost = func(trajectory=None, actions=actions)
+        cost = func(trajectory=torch.zeros((1,)), actions=actions)
 
         assert cost == 0
 
@@ -69,7 +72,7 @@ class TestActionConstraint:
         func = ActionConstraint(safe_area, penalty=5)
         actions = torch.tensor([[0, 0], [1.1, 0.0], [-0.9, -0.99]], dtype=torch.double)
 
-        cost = func(trajectory=None, actions=actions)
+        cost = func(trajectory=torch.zeros((1,)), actions=actions)
 
         assert cost == 5
 
@@ -78,7 +81,7 @@ class TestActionConstraint:
         func = ActionConstraint(safe_area, penalty=5)
         actions = torch.tensor([[0, 0], [-2, -3], [0.5, 1.2]], dtype=torch.double)
 
-        cost = func(trajectory=None, actions=actions)
+        cost = func(trajectory=torch.zeros((1,)), actions=actions)
 
         assert cost == 10
 
@@ -139,15 +142,15 @@ class FakeConstraint(Constraint):
 
 
 class TestRolloutFunction:
+    class BasicDynamics(DynamicsFunc):
+        def __init__(self, objective_cost: float):
+            self._objective_cost = objective_cost
 
-    @staticmethod
-    def _dynamics_function(state, action):
-        return state + action
+        def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
+            return state + action, torch.tensor([self._objective_cost])
 
     def _set_up(self):
-        objective_cost_func = lambda x, y: 0
-        func = RolloutFunction(self._dynamics_function, objective_cost_func, [], STATE_DIMEN, ACTION_DIMEN,
-                               TIME_HORIZON)
+        func = RolloutFunction(self.BasicDynamics(objective_cost=0.0), [], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
         initial_state = torch.tensor([0, 0], dtype=torch.double)
         means = torch.tensor([[1, 0], [0, 1], [0, 0]], dtype=torch.double)
         stds = torch.zeros((TIME_HORIZON, ACTION_DIMEN), dtype=torch.double)
@@ -193,19 +196,18 @@ class TestRolloutFunction:
 
     def test__perform_rollout__objective_cost_correct(self):
         _, initial_state, means, stds = self._set_up()
-        objective_cost_func = lambda x, y: 15
-        func = RolloutFunction(self._dynamics_function, objective_cost_func, [FakeConstraint()], STATE_DIMEN,
-                               ACTION_DIMEN, TIME_HORIZON)
+        func = RolloutFunction(self.BasicDynamics(objective_cost=15.0), [FakeConstraint()], STATE_DIMEN, ACTION_DIMEN,
+                               TIME_HORIZON)
 
         rollout = func.perform_rollout((initial_state, means, stds))
 
-        assert rollout.objective_cost == 15
+        # We take three actions.
+        assert rollout.objective_cost == 15 * 3
 
     def test__perform_rollout__constraint_cost_correct(self):
         _, initial_state, means, stds = self._set_up()
-        objective_cost_func = lambda x, y: 0
-        func = RolloutFunction(self._dynamics_function, objective_cost_func, [FakeConstraint()], STATE_DIMEN,
-                               ACTION_DIMEN, TIME_HORIZON)
+        func = RolloutFunction(self.BasicDynamics(objective_cost=0.0), [FakeConstraint()], STATE_DIMEN, ACTION_DIMEN,
+                               TIME_HORIZON)
 
         rollout = func.perform_rollout((initial_state, means, stds))
 
