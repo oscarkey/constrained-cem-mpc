@@ -1,2 +1,2 @@
 from constrained_cem_mpc.constrained_cem_mpc import ConstrainedCemMpc, box2torchpoly, ActionConstraint, StateConstraint, \
-    TerminalConstraint, TorchPolytope, Rollout, Constraint, DynamicsFunc
+    TerminalConstraint, TorchPolytope, Rollouts, Constraint, DynamicsFunc

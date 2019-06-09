@@ -11,8 +11,9 @@ from constrained_cem_mpc import ConstrainedCemMpc, ActionConstraint, box2torchpo
 
 
 class Dynamics(DynamicsFunc):
-    def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
-        th, thdot = state
+    def __call__(self, states: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
+        th = states[:, 0]
+        thdot = states[:, 1]
 
         max_speed = 8
         max_torque = 2.
@@ -21,15 +22,15 @@ class Dynamics(DynamicsFunc):
         l = 1.
         dt = .05
 
-        u = action.clamp(-max_torque, max_torque)[0]
+        u = actions.clamp(-max_torque, max_torque)[:, 0]
 
         newthdot = thdot + (-3 * g / (2 * l) * torch.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
         newth = th + newthdot * dt
         newthdot = newthdot.clamp(-max_speed, max_speed)
 
-        objective_cost = torch.tensor([0.0])
+        objective_cost = torch.zeros_like(th)
 
-        return torch.tensor([newth, newthdot]), objective_cost
+        return torch.stack((newth, newthdot), dim=1), objective_cost
 
 
 def observation_to_state(observation: (float, float, float)) -> Tensor:
@@ -55,24 +56,22 @@ def main():
                    TerminalConstraint(box2torchpoly([[0, 1], [-0.8, 0.8]])),  #
                    StateConstraint(box2torchpoly([[0, 1], [-8, 8]]))]
     mpc = ConstrainedCemMpc(dynamics_func=Dynamics(), constraints=constraints, state_dimen=2, action_dimen=1,
-                            time_horizon=10, num_rollouts=40, num_elites=8, num_iterations=5, num_workers=0)
+                            time_horizon=10, num_rollouts=50, num_elites=10, num_iterations=8)
 
     observation = reset_env(env)
     for i in range(400):
         env.render()
         state = observation_to_state(observation)
         time_start = time.time()
-        action, _ = mpc.get_actions(state)
+        actions, _ = mpc.get_actions(state)
         time_end = time.time()
         print('time in solver:', time_end - time_start)
 
-        if action is None:
-            if state[0] > 3:
-                action = (state[1].sign() * 2).unsqueeze(0)
-            else:
-                action = torch.tensor([0])
+        if actions is None:
+            action = torch.tensor([0])
             print('default action', action)
         else:
+            action = actions[0]
             print('mpc action', action)
 
         observation, reward, done, info = env.step(action.numpy())

@@ -2,11 +2,10 @@ from typing import Tuple
 
 import matplotlib.pyplot as plt
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 
 from constrained_cem_mpc import ConstrainedCemMpc, TerminalConstraint, StateConstraint, ActionConstraint, box2torchpoly, \
-    Rollout, DynamicsFunc
+    Rollouts, DynamicsFunc
 from utils import assert_shape
 
 state_dimen = 2
@@ -27,11 +26,12 @@ def dynamics(s, a):
 
 
 class Dynamics(DynamicsFunc):
-    def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
-        assert_shape(state, (state_dimen,))
-        assert_shape(action, (action_dimen,))
+    def __call__(self, states: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
+        assert states.size(1) == state_dimen
+        assert actions.size(1) == action_dimen
 
-        return state + action, F.pairwise_distance(objective_poly.chebXc.unsqueeze(0), trajectory[10].unsqueeze(0))
+        # TODO: re-enable objective cost.
+        return states + actions, torch.zeros(states.size(0))
 
 
 def check_intersect(t, c):
@@ -42,7 +42,7 @@ def check_intersect(t, c):
     return False
 
 
-def plot_trajectories(ts, axes=None):
+def plot_trajectories(ts: Tensor, axes=None):
     should_show = False
     if axes is None:
         axes = plt.axes()
@@ -64,15 +64,15 @@ def plot_trajectories(ts, axes=None):
         plt.show()
 
 
-def mean_objective_cost(rollouts: [Rollout]):
-    return sum([rollout.objective_cost for rollout in rollouts]) / float(len(rollouts))
+def mean_objective_cost(rollouts: Rollouts):
+    return rollouts.objective_costs.mean().item()
 
 
-def mean_constraint_cost(rollouts: [Rollout]):
-    return sum([rollout.constraint_cost for rollout in rollouts]) / float(len(rollouts))
+def mean_constraint_cost(rollouts: Rollouts):
+    return rollouts.constraint_costs.mean().item()
 
 
-def plot_costs(rollouts_by_time: [[Rollout]]):
+def plot_costs(rollouts_by_time: [Rollouts]):
     avg_objective_costs = [mean_objective_cost(rollouts) for rollouts in rollouts_by_time]
     avg_constraint_costs = [mean_constraint_cost(rollouts) for rollouts in rollouts_by_time]
     xs = range(1, len(rollouts_by_time) + 1)
@@ -90,10 +90,10 @@ def main():
                    StateConstraint(safe_area),  #
                    ActionConstraint(box2torchpoly([[-1, 1], [-1, 1]]))]
     mpc = ConstrainedCemMpc(Dynamics(), constraints, state_dimen, action_dimen, time_horizon=20, num_rollouts=400,
-                            num_elites=30, num_iterations=50, num_workers=2)
+                            num_elites=30, num_iterations=50)
     rollouts_by_time = mpc.optimize_trajectories(torch.tensor([0.5, 0.5]))
 
-    plot_trajectories([rollout.trajectory for rollout in rollouts_by_time[-1][0:10]])
+    plot_trajectories(rollouts_by_time[-1].trajectories[0:10])
     plot_costs(rollouts_by_time)
 
 

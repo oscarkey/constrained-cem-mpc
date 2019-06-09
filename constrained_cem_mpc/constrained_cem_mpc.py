@@ -6,7 +6,6 @@ import torch
 import torch.nn.functional as F
 from polytope import Polytope, polytope
 from torch import Tensor
-from torch.multiprocessing import Pool
 
 from constrained_cem_mpc.utils import assert_shape
 
@@ -102,17 +101,20 @@ class ActionConstraint(Constraint):
 
 
 class DynamicsFunc(ABC):
-    def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
+    @abstractmethod
+    def __call__(self, states: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
         """Computes the next state and cost of the action.
 
-        :param state: [state dimen] the current state
-        :param action: [action dimen] the action to perform
-        :returns: (next state [state dimen], cost [1x0])
+        :param states: [N x state dimen] the current state, where N is the batch dimension
+        :param actions: [N x action dimen] the action to perform, where N is the batch dimension
+        :returns:
+            next states [N x state dimen],
+            costs [N x 0]
         """
         pass
 
 
-Rollout = namedtuple('Rollout', 'trajectory actions objective_cost constraint_cost')
+Rollouts = namedtuple('Rollouts', 'trajectories actions objective_costs constraint_costs')
 
 
 class RolloutFunction:
@@ -122,52 +124,61 @@ class RolloutFunction:
     """
 
     def __init__(self, dynamics: DynamicsFunc, constraints: List[Constraint], state_dimen: int, action_dimen: int,
-                 time_horizon: int):
+                 time_horizon: int, num_rollouts: int):
         self._dynamics = dynamics
         self._constraints = constraints
         self._state_dimen = state_dimen
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
+        self._num_rollouts = num_rollouts
 
-    def perform_rollout(self, args: Tuple[Tensor, Tensor, Tensor]) -> Rollout:
+    def perform_rollouts(self, args: Tuple[Tensor, Tensor, Tensor]) -> Rollouts:
         """Samples a trajectory, and returns the trajectory and the cost.
 
+        :param args: (initial_state [state_dimen], action means, action stds)
         :returns: (sequence of states, sequence of actions, cost)
         """
         initial_state, means, stds = args
-        trajectory, actions, objective_cost = self._sample_trajectory(initial_state, means, stds)
-        constraint_cost = self._compute_constraint_cost(trajectory, actions)
+        initial_states = initial_state.repeat((self._num_rollouts, 1))
+        trajectories, actions, objective_costs = self._sample_trajectory(initial_states, means, stds)
+        constraint_costs = self._compute_constraint_costs(trajectories, actions)
 
-        return Rollout(trajectory, actions, objective_cost, constraint_cost)
+        return Rollouts(trajectories, actions, objective_costs, constraint_costs)
 
-    def _sample_trajectory(self, initial_state: Tensor, means: Tensor, stds: Tensor) -> Tuple[Tensor, Tensor, float]:
+    def _sample_trajectory(self, initial_states: Tensor, means: Tensor, stds: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         """Randomly samples T actions and computes the trajectory.
 
-        :returns: (sequence of states, sequence of actions)
+        :returns: (sequence of states, sequence of actions, costs)
         """
-        assert_shape(initial_state, (self._state_dimen,))
+        assert_shape(initial_states, (self._num_rollouts, self._state_dimen))
         assert_shape(means, (self._time_horizon, self._action_dimen))
         assert_shape(stds, (self._time_horizon, self._action_dimen))
 
-        actions = torch.distributions.Normal(means, stds).sample()
-        assert_shape(actions, (self._time_horizon, self._action_dimen))
+        actions = torch.distributions.Normal(means, stds).sample(sample_shape=(self._num_rollouts,))
+        assert_shape(actions, (self._num_rollouts, self._time_horizon, self._action_dimen))
 
-        trajectory = [initial_state]
-        objective_cost = 0.0
-        for a in actions:
-            next_state, cost = self._dynamics(trajectory[-1], a)
-            trajectory.append(next_state)
+        # One more state than the time horizon because of the initial state.
+        trajectories = torch.empty((self._num_rollouts, self._time_horizon + 1, self._state_dimen))
+        trajectories[:, 0, :] = initial_states
+        objective_costs = torch.zeros((self._num_rollouts,))
+        for t in range(self._time_horizon):
+            next_states, costs = self._dynamics(trajectories[:, t, :], actions[:, t, :])
+
+            assert_shape(next_states, (self._num_rollouts, self._state_dimen))
+            assert_shape(costs, (self._num_rollouts,))
+
+            trajectories[:, t + 1, :] = next_states
             # TODO: worry about underflow.
-            objective_cost += cost.squeeze().item()
+            objective_costs += costs
 
-        trajectory_tensor = torch.stack(trajectory)
-        # One more state than _T because of the initial state.
-        assert_shape(trajectory_tensor, (self._time_horizon + 1, self._state_dimen))
+        return trajectories, actions, objective_costs
 
-        return trajectory_tensor, actions, objective_cost
-
-    def _compute_constraint_cost(self, trajectory: Tensor, actions: Tensor) -> float:
-        return sum([constraint(trajectory, actions) for constraint in self._constraints])
+    def _compute_constraint_costs(self, trajectories: Tensor, actions: Tensor) -> Tensor:
+        # TODO: Batch computation of constraint costs.
+        costs = torch.empty((self._num_rollouts))
+        for i in range(self._num_rollouts):
+            costs[i] = sum([constraint(trajectories[i], actions[i]) for constraint in self._constraints])
+        return costs
 
 
 class ConstrainedCemMpc:
@@ -180,67 +191,61 @@ class ConstrainedCemMpc:
     """
 
     def __init__(self, dynamics_func, constraints: List[Constraint], state_dimen: int, action_dimen: int,
-                 time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int, num_workers: int = 0,
+                 time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int,
                  rollout_function: RolloutFunction = None):
         """Creates a new instance.
 
-        :param num_workers: If >0, we will spawn worker processes to compute the rollouts. Otherwise, we will compute the
-        rollouts in the current process and thread.
-        :param rollout_function: Only set this in unit tests, normally it we be created automatically.
+        :param rollout_function: Only set this in unit tests, normally this function will create it automatically.
         """
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
         self._num_rollouts = num_rollouts
         self._num_elites = num_elites
         self._num_iterations = num_iterations
-        self._process_pool = Pool(num_workers) if num_workers > 0 else None
 
         if rollout_function is None:
-            rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon)
+            rollout_function = RolloutFunction(dynamics_func, constraints, state_dimen, action_dimen, time_horizon,
+                                               num_rollouts)
         self._rollout_function = rollout_function
 
-    def optimize_trajectories(self, initial_state: Tensor) -> List[List[Rollout]]:
+    def optimize_trajectories(self, initial_state: Tensor) -> List[Rollouts]:
         """Performs stochastic rollouts and optimises them using CEM, subject to the constraints.
 
-        :returns: A list of lists where each inner list is all the rollouts from a single optimisation step. The final
-        step is last in the outer list.
+        :returns: A list of rollouts from each optimisation step. The final step is last.
         """
         means = torch.zeros((self._time_horizon, self._action_dimen))
         stds = torch.ones((self._time_horizon, self._action_dimen))
         rollouts_by_time = []
         for i in range(self._num_iterations):
-            rollouts = self._perform_rollouts(initial_state, means, stds)
+            rollouts = self._rollout_function.perform_rollouts((initial_state, means, stds))
             elite_rollouts = self._select_elites(rollouts)
-            elite_actions = torch.stack([rollout.actions for rollout in elite_rollouts])
 
-            means = elite_actions.mean(dim=0)
-            stds = elite_actions.std(dim=0)
+            means = elite_rollouts.actions.mean(dim=0)
+            stds = elite_rollouts.actions.std(dim=0)
 
             rollouts_by_time.append(rollouts)
 
         return rollouts_by_time
 
-    def _perform_rollouts(self, initial_state, means, stds) -> List[Rollout]:
-        if self._process_pool is not None:
-            return self._process_pool.map(self._rollout_function.perform_rollout,
-                                          [(initial_state, means, stds) for _ in range(self._num_rollouts)])
-        else:
-            return [self._rollout_function.perform_rollout((initial_state, means, stds)) for _ in
-                    range(self._num_rollouts)]
-
-    def _select_elites(self, rollouts: List[Rollout]) -> List[Rollout]:
-        """Returns a list of the elite rollouts.
+    def _select_elites(self, rollouts: Rollouts) -> Rollouts:
+        """Returns the elite rollouts.
 
         If there are sufficient rollouts which satisfy the constraints, return these sorted by objective cost.
         Otherwise, return rollouts sorted by constraint cost.
         """
-        feasible = [rollout for rollout in rollouts if rollout.constraint_cost == 0]
-        if len(feasible) >= self._num_elites:
-            return sorted(feasible, key=lambda rollout: rollout.objective_cost)[:self._num_elites]
+        feasible_ids = (rollouts.constraint_costs == 0).nonzero()
+        if feasible_ids.size(0) >= self._num_elites:
+            _, sorted_ids_of_feasible_ids = rollouts.objective_costs[feasible_ids].squeeze().sort()
+            elites_ids = feasible_ids[sorted_ids_of_feasible_ids[0:self._num_elites]].squeeze()
+            return Rollouts(rollouts.trajectories[elites_ids], rollouts.actions[elites_ids],
+                            rollouts.objective_costs[elites_ids], rollouts.constraint_costs[elites_ids])
         else:
-            return sorted(rollouts, key=lambda x: x.constraint_cost)[:self._num_elites]
+            _, sorted_ids = rollouts.constraint_costs.sort()
+            elites_ids = sorted_ids[0:self._num_elites]
+            return Rollouts(rollouts.trajectories[elites_ids], rollouts.actions[elites_ids],
+                            rollouts.objective_costs[elites_ids], rollouts.constraint_costs[elites_ids])
 
-    def get_actions(self, state: Tensor) -> Tuple[Union[Tensor, None], List[List[Rollout]]]:
+    def get_actions(self, state: Tensor) -> Tuple[Union[Tensor, None], List[Rollouts]]:
         """Computes the approximately optimal actions to take from the given state.
 
         The sequence of actions is guaranteed to be safe wrt to the constraints.
@@ -255,9 +260,10 @@ class ConstrainedCemMpc:
         # Use the rollouts from the final optimisation step.
         rollouts = rollouts_by_time[-1]
 
-        feasible_rollouts = [rollout for rollout in rollouts if rollout.constraint_cost == 0]
-        if len(feasible_rollouts) > 0:
-            best_rollout = sorted(feasible_rollouts, key=lambda rollout: rollout.objective_cost)[0]
-            return best_rollout.actions, rollouts_by_time
+        feasible_ids = (rollouts.constraint_costs == 0).nonzero()
+        if feasible_ids.size(0) > 0:
+            _, sorted_ids_of_feasible_ids = rollouts.objective_costs[feasible_ids].squeeze().sort()
+            best_rollout_id = feasible_ids[sorted_ids_of_feasible_ids[0]].item()
+            return rollouts.actions[best_rollout_id], rollouts_by_time
         else:
             return None, rollouts_by_time

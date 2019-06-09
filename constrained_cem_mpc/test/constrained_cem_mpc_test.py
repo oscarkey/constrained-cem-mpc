@@ -6,7 +6,7 @@ from polytope import polytope
 from torch import Tensor
 
 from constrained_cem_mpc import TerminalConstraint, StateConstraint, ActionConstraint, TorchPolytope, box2torchpoly, \
-    Constraint, ConstrainedCemMpc, Rollout, DynamicsFunc
+    Constraint, ConstrainedCemMpc, DynamicsFunc, Rollouts
 from constrained_cem_mpc.constrained_cem_mpc import RolloutFunction
 
 
@@ -131,6 +131,7 @@ class TestTorchPolytope:
 STATE_DIMEN = 2
 ACTION_DIMEN = 2
 TIME_HORIZON = 3
+NUM_ROLLOUTS = 5
 
 
 class FakeConstraint(Constraint):
@@ -146,24 +147,28 @@ class TestRolloutFunction:
         def __init__(self, objective_cost: float):
             self._objective_cost = objective_cost
 
-        def __call__(self, state: Tensor, action: Tensor) -> Tuple[Tensor, Tensor]:
-            return state + action, torch.tensor([self._objective_cost])
+        def __call__(self, states: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
+            assert states.size(0) == actions.size(0), 'Batch dimensions must match.'
+            return states + actions, torch.full((states.size(0),), self._objective_cost)
 
     def _set_up(self):
-        func = RolloutFunction(self.BasicDynamics(objective_cost=0.0), [], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON)
+        func = RolloutFunction(self.BasicDynamics(objective_cost=0.0), [], STATE_DIMEN, ACTION_DIMEN, TIME_HORIZON,
+                               NUM_ROLLOUTS)
         initial_state = torch.tensor([0, 0], dtype=torch.double)
         means = torch.tensor([[1, 0], [0, 1], [0, 0]], dtype=torch.double)
         stds = torch.zeros((TIME_HORIZON, ACTION_DIMEN), dtype=torch.double)
 
         return func, initial_state, means, stds
 
-    def test__perform_rollout__trajectory_correct(self):
+    def test__perform_rollouts__trajectory_correct(self):
         func, initial_state, means, stds = self._set_up()
 
-        rollout = func.perform_rollout((initial_state, means, stds))
-        trajectory = rollout.trajectory
+        rollouts = func.perform_rollouts((initial_state, means, stds))
+        trajectories = rollouts.trajectories
 
-        assert trajectory.shape == (TIME_HORIZON + 1, STATE_DIMEN)
+        assert trajectories.size() == (NUM_ROLLOUTS, TIME_HORIZON + 1, STATE_DIMEN)
+
+        trajectory = trajectories[0]
 
         assert trajectory[0][0] == 0
         assert trajectory[0][1] == 0
@@ -177,64 +182,69 @@ class TestRolloutFunction:
         assert trajectory[3][0] == 1
         assert trajectory[3][1] == 1
 
-    def test__perform_rollout__actions_correct(self):
+    def test__perform_rollouts__actions_correct(self):
         func, initial_state, means, stds = self._set_up()
 
-        rollout = func.perform_rollout((initial_state, means, stds))
-        actions = rollout.actions
+        rollouts = func.perform_rollouts((initial_state, means, stds))
+        actions = rollouts.actions
 
-        assert actions.shape == (TIME_HORIZON, ACTION_DIMEN)
+        assert actions.shape == (NUM_ROLLOUTS, TIME_HORIZON, ACTION_DIMEN)
 
-        assert actions[0][0] == 1
-        assert actions[0][1] == 0
+        assert actions[0][0][0] == 1
+        assert actions[0][0][1] == 0
 
-        assert actions[1][0] == 0
-        assert actions[1][1] == 1
+        assert actions[0][1][0] == 0
+        assert actions[0][1][1] == 1
 
-        assert actions[2][0] == 0
-        assert actions[2][1] == 0
+        assert actions[0][2][0] == 0
+        assert actions[0][2][1] == 0
 
-    def test__perform_rollout__objective_cost_correct(self):
+    def test__perform_rollouts__objective_cost_correct(self):
         _, initial_state, means, stds = self._set_up()
         func = RolloutFunction(self.BasicDynamics(objective_cost=15.0), [FakeConstraint()], STATE_DIMEN, ACTION_DIMEN,
-                               TIME_HORIZON)
+                               TIME_HORIZON, NUM_ROLLOUTS)
 
-        rollout = func.perform_rollout((initial_state, means, stds))
+        rollouts = func.perform_rollouts((initial_state, means, stds))
 
         # We take three actions.
-        assert rollout.objective_cost == 15 * 3
+        assert rollouts.objective_costs[0] == 15 * 3
 
-    def test__perform_rollout__constraint_cost_correct(self):
+    def test__perform_rollouts__constraint_cost_correct(self):
         _, initial_state, means, stds = self._set_up()
         func = RolloutFunction(self.BasicDynamics(objective_cost=0.0), [FakeConstraint()], STATE_DIMEN, ACTION_DIMEN,
-                               TIME_HORIZON)
+                               TIME_HORIZON, NUM_ROLLOUTS)
 
-        rollout = func.perform_rollout((initial_state, means, stds))
+        rollouts = func.perform_rollouts((initial_state, means, stds))
 
-        assert rollout.constraint_cost == 5
+        assert rollouts.constraint_costs[0] == 5
 
 
 class TestConstrainedCemMpc:
     def test__optimize_trajectories__rollouts_fail_constraints__one_step_opt_correct(self, mocker):
         # Set objective cost inverse to constraint cost, to check it orders by constraint cost.
-        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[10.0, 0.0]]), 8, 3)
-        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[1.0, 0.0]]), 9, 2)
-        rollout3 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[3.0, 0.0]]), 10, 1)
-        rolloutx = Rollout(torch.tensor([[0, 0], [100, 0]]), torch.tensor([[100.0, 0.0]]), 20, 20)
+        trajectories1 = torch.tensor([[[0, 0], [1, 0]], [[0, 0], [1, 0]], [[0, 0], [1, 0]]])
+        actions1 = torch.tensor([[[10.0, 0.0]], [[1.0, 0.0]], [[3.0, 0.0]]])
+        objective_costs1 = torch.tensor([8., 9., 10.])
+        constraint_costs1 = torch.tensor([3., 2., 1.])
+        rollouts1 = Rollouts(trajectories1, actions1, objective_costs1, constraint_costs1)
+
+        trajectories2 = torch.tensor([[[0, 0], [100, 0]], [[0, 0], [100, 0]], [[0, 0], [100, 0]]])
+        actions2 = torch.tensor([[[100.0, 0.0]], [[100.0, 0.0]], [[100.0, 0.0]]])
+        objective_costs2 = torch.tensor([20., 20., 20.])
+        constraint_costs2 = torch.tensor([20., 20., 20.])
+        rollouts2 = Rollouts(trajectories2, actions2, objective_costs2, constraint_costs2)
 
         rollout_function = mocker.Mock()
-        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3, rolloutx, rolloutx, rolloutx]
+        rollout_function.perform_rollouts.side_effect = [rollouts1, rollouts2]
 
-        mpc = ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
-                                time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=2, num_workers=0,
-                                rollout_function=rollout_function)
+        mpc = ConstrainedCemMpc(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=1,
+                                num_rollouts=3, num_elites=2, num_iterations=2, rollout_function=rollout_function)
 
         mpc.optimize_trajectories(torch.tensor([0, 0]))
 
-        args = [call.args for call in rollout_function.perform_rollout.call_args_list]
         # We expect it to take mean and std of the 2nd and 3rd rollouts, and use these on the next step.
-        # The next step should be the 4th call to the function.
-        initial_state, means, stds = rollout_function.perform_rollout.call_args_list[4][0][0]
+        # The next step should be the 2nd call to the function.
+        initial_states, means, stds = rollout_function.perform_rollouts.call_args_list[1][0][0]
         assert means[0][0].item() == 2
         assert means[0][1].item() == 0
 
@@ -245,25 +255,34 @@ class TestConstrainedCemMpc:
         assert stds[0][1] == 0
 
     def test__optimize_trajectories__rollouts_pass_constraints__one_step_opt_correct(self, mocker):
-        # Set constraint cost to 0 as all rollouts pass constraints
-        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[10.0, 0.0]]), 8, 0)
-        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[1.0, 0.0]]), 10, 0)
-        rollout3 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[2.0, 0.0]]), 9, 0)
-        rolloutx = Rollout(torch.tensor([[0, 0], [100, 0]]), torch.tensor([[100.0, 0.0]]), 20, 0)
+        # Have 4 rollouts, 3 of which pass the constraints (and thus has constraint cost 0).
+        trajectories1 = torch.tensor([[[0, 0], [1, 0]], [[0, 0], [1, 0]], [[0, 0], [1, 0]], [[0, 0], [1, 0]]])
+        actions1 = torch.tensor(
+            [[[10., 0.], [0., 0.]], [[3., 0.], [0., 0.]], [[1., 0.], [0., 0.]], [[2., 0.], [0., 0.]]])
+        objective_costs1 = torch.tensor([8., 7., 10., 9.])
+        constraint_costs1 = torch.tensor([0., 1., 0., 0.])
+        rollouts1 = Rollouts(trajectories1, actions1, objective_costs1, constraint_costs1)
+
+        trajectories2 = torch.tensor([[[0, 0], [100, 0]], [[0, 0], [1, 0]], [[0, 0], [100, 0]], [[0, 0], [100, 0]]])
+        actions2 = torch.tensor(
+            [[[100., 0.0], [0., 0.]], [[100., 0.], [0., 0.]], [[100., 0.], [0., 0.]], [[100., 0.], [0., 0.]]])
+        objective_costs2 = torch.tensor([20., 20., 20., 20.])
+        constraint_costs2 = torch.tensor([0., 1., 0., 0.])
+        rollouts2 = Rollouts(trajectories2, actions2, objective_costs2, constraint_costs2)
 
         rollout_function = mocker.Mock()
-        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3, rolloutx, rolloutx, rolloutx]
+        rollout_function.perform_rollouts.side_effect = [rollouts1, rollouts2]
 
-        mpc = ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
-                                time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=2, num_workers=0,
-                                rollout_function=rollout_function)
+        mpc = ConstrainedCemMpc(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=1,
+                                num_rollouts=3, num_elites=2, num_iterations=2, rollout_function=rollout_function)
 
         mpc.optimize_trajectories(torch.tensor([0, 0]))
 
-        args = [call.args for call in rollout_function.perform_rollout.call_args_list]
+        args = [call.args for call in rollout_function.perform_rollouts.call_args_list]
         # We expect it to take mean and std of the 1st and 3rd rollouts, and use these on the next step.
-        # The next step should be the 4th call to the function.
-        initial_state, means, stds = rollout_function.perform_rollout.call_args_list[4][0][0]
+        # The next step should be the 2nd call to the function.
+        initial_states, means, stds = rollout_function.perform_rollouts.call_args_list[1][0][0]
+        # [action in seq][action dimen]
         assert means[0][0].item() == 6
         assert means[0][1].item() == 0
 
@@ -275,58 +294,66 @@ class TestConstrainedCemMpc:
 
     def test__get_actions__no_feasible_rollout__returns_none(self, mocker):
         # All non-zero constraint costs so no rollout is feasible
-        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
-        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
-        rollout3 = Rollout(torch.tensor([[0, 0], [0, 0]]), torch.tensor([[0.0, 0.0]]), 0, 1)
+        trajectories1 = torch.tensor([[[0, 0], [1, 0]], [[0, 0], [1, 0]], [[0, 0], [0, 0]]])
+        actions1 = torch.tensor([[[0.0, 0.0]], [[0.0, 0.0]], [[0.0, 0.0]]])
+        objective_costs1 = torch.tensor([0., 0., 0.])
+        constraint_costs1 = torch.tensor([3., 2., 1.])
+        rollouts1 = Rollouts(trajectories1, actions1, objective_costs1, constraint_costs1)
 
         rollout_function = mocker.Mock()
-        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3]
+        rollout_function.perform_rollouts.side_effect = [rollouts1]
 
-        mpc = ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
-                                time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0,
-                                rollout_function=rollout_function)
+        mpc = ConstrainedCemMpc(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=1,
+                                num_rollouts=3, num_elites=2, num_iterations=1, rollout_function=rollout_function)
 
         actions, _ = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
         assert actions is None
 
     def test__get_actions__feasible_rollouts__returns_actions_from_best(self, mocker):
-        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
-        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
-        rollout3 = Rollout(torch.tensor([[0, 0], [0, 0]]), torch.tensor([[0.0, 0.0]]), 0, 1)
-        rollout4 = Rollout(torch.tensor([[0, 0], [1, 0], [1, 0]]), torch.tensor([[0.0, 0.0], [0.0, 0.0]]), 1, 3)
-        rollout5 = Rollout(torch.tensor([[0, 0], [1, 0], [1, 0]]), torch.tensor([[1.0, 1.5], [3.0, 2.5]]), 5, 0)
-        rollout6 = Rollout(torch.tensor([[0, 0], [0, 0], [1, 0]]), torch.tensor([[0.0, 0.0], [0.0, 0.0]]), 10, 0)
+        trajectories1 = torch.tensor([[[0, 0], [1, 0], [1, 0]], [[0, 0], [1, 0], [1, 0]], [[0, 0], [0, 0], [1, 0]]])
+        actions1 = torch.tensor([[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]])
+        objective_costs1 = torch.tensor([0., 0., 0.])
+        constraint_costs1 = torch.tensor([3., 2., 1.])
+        rollouts1 = Rollouts(trajectories1, actions1, objective_costs1, constraint_costs1)
+
+        trajectories2 = torch.tensor([[[0, 0], [1, 0], [1, 0]], [[0, 0], [1, 0], [1, 0]], [[0, 0], [0, 0], [1, 0]]])
+        actions2 = torch.tensor([[[0.0, 0.0], [0.0, 0.0]], [[1.0, 1.5], [3.0, 2.5]], [[0.0, 0.0], [0.0, 0.0]]])
+        objective_costs2 = torch.tensor([1., 5., 10.])
+        constraint_costs2 = torch.tensor([3., 0., 0.])
+        rollouts2 = Rollouts(trajectories2, actions2, objective_costs2, constraint_costs2)
 
         rollout_function = mocker.Mock()
-        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3, rollout4, rollout5, rollout6]
+        rollout_function.perform_rollouts.side_effect = [rollouts1, rollouts2]
 
-        mpc = ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
-                                time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=2, num_workers=0,
-                                rollout_function=rollout_function)
+        mpc = ConstrainedCemMpc(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=1,
+                                num_rollouts=3, num_elites=2, num_iterations=2, rollout_function=rollout_function)
 
-        action, _ = mpc.get_actions(torch.tensor([0.0, 0.0]))
+        actions, _ = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
-        assert action[0][0] == 1.0
-        assert action[0][1] == 1.5
-        assert action[1][0] == 3.0
-        assert action[1][1] == 2.5
+        # We expect it to pick the actions from the best rollout of the second iteration.
+        assert actions[0][0] == 1.0
+        assert actions[0][1] == 1.5
+        assert actions[1][0] == 3.0
+        assert actions[1][1] == 2.5
 
     def test__get_actions__returns_rollouts_by_time(self, mocker):
-        rollout1 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 3)
-        rollout2 = Rollout(torch.tensor([[0, 0], [1, 0]]), torch.tensor([[0.0, 0.0]]), 0, 2)
-        rollout3 = Rollout(torch.tensor([[0, 0], [0, 0]]), torch.tensor([[0.0, 0.0]]), 0, 1)
+        trajectories1 = torch.tensor([[[0, 0], [1, 0]], [[0, 0], [1, 0]], [[0, 0], [0, 0]]])
+        actions1 = torch.tensor([[[0.0, 0.0]], [[0.0, 0.0]], [[0.0, 0.0]]])
+        objective_costs1 = torch.tensor([0., 0., 0.])
+        constraint_costs1 = torch.tensor([3., 2., 1.])
+        rollouts1 = Rollouts(trajectories1, actions1, objective_costs1, constraint_costs1)
 
         rollout_function = mocker.Mock()
-        rollout_function.perform_rollout.side_effect = [rollout1, rollout2, rollout3]
+        rollout_function.perform_rollouts.side_effect = [rollouts1]
 
-        mpc = ConstrainedCemMpc(dynamics_func=None, objective_func=None, constraints=[], state_dimen=2, action_dimen=2,
-                                time_horizon=1, num_rollouts=3, num_elites=2, num_iterations=1, num_workers=0,
-                                rollout_function=rollout_function)
+        mpc = ConstrainedCemMpc(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=1,
+                                num_rollouts=3, num_elites=2, num_iterations=1, rollout_function=rollout_function)
 
         _, rollouts_by_time = mpc.get_actions(torch.tensor([0.0, 0.0]))
 
         assert len(rollouts_by_time) == 1
-        assert rollouts_by_time[0][0] == rollout1
-        assert rollouts_by_time[0][1] == rollout2
-        assert rollouts_by_time[0][2] == rollout3
+        assert torch.allclose(rollouts_by_time[0].trajectories, trajectories1)
+        assert torch.allclose(rollouts_by_time[0].actions, actions1)
+        assert torch.allclose(rollouts_by_time[0].objective_costs, objective_costs1)
+        assert torch.allclose(rollouts_by_time[0].constraint_costs, constraint_costs1)
