@@ -310,6 +310,33 @@ class TestConstrainedCemMpc:
 
         assert actions is None
 
+    def test__get_actions__one_feasible_rollout__returns_actions_from_rollout(self, mocker):
+        trajectories1 = torch.tensor([[[0, 0], [1, 0], [1, 0]], [[0, 0], [1, 0], [1, 0]], [[0, 0], [0, 0], [1, 0]]])
+        actions1 = torch.tensor([[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]])
+        objective_costs1 = torch.tensor([0., 0., 0.])
+        constraint_costs1 = torch.tensor([3., 2., 1.])
+        rollouts1 = Rollouts(trajectories1, actions1, objective_costs1, constraint_costs1)
+
+        trajectories2 = torch.tensor([[[0, 0], [1, 0], [1, 0]], [[0, 0], [1, 0], [1, 0]], [[0, 0], [0, 0], [1, 0]]])
+        actions2 = torch.tensor([[[0.0, 0.0], [0.0, 0.0]], [[1.0, 1.5], [3.0, 2.5]], [[0.0, 0.0], [0.0, 0.0]]])
+        objective_costs2 = torch.tensor([1., 20., 10.])
+        constraint_costs2 = torch.tensor([3., 0., 2.])
+        rollouts2 = Rollouts(trajectories2, actions2, objective_costs2, constraint_costs2)
+
+        rollout_function = mocker.Mock()
+        rollout_function.perform_rollouts.side_effect = [rollouts1, rollouts2]
+
+        mpc = ConstrainedCemMpc(dynamics_func=None, constraints=[], state_dimen=2, action_dimen=2, time_horizon=1,
+                                num_rollouts=3, num_elites=2, num_iterations=2, rollout_function=rollout_function)
+
+        actions, _ = mpc.get_actions(torch.tensor([0.0, 0.0]))
+
+        # We expect it to pick the actions from the only feasible rollout in the second iteration.
+        assert actions[0][0] == 1.0
+        assert actions[0][1] == 1.5
+        assert actions[1][0] == 3.0
+        assert actions[1][1] == 2.5
+
     def test__get_actions__feasible_rollouts__returns_actions_from_best(self, mocker):
         trajectories1 = torch.tensor([[[0, 0], [1, 0], [1, 0]], [[0, 0], [1, 0], [1, 0]], [[0, 0], [0, 0], [1, 0]]])
         actions1 = torch.tensor([[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]])

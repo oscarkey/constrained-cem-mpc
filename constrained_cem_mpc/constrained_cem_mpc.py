@@ -260,9 +260,9 @@ class ConstrainedCemMpc:
         # Use the rollouts from the final optimisation step.
         rollouts = rollouts_by_time[-1]
 
-        feasible_ids = (rollouts.constraint_costs == 0).nonzero()
+        feasible_ids = (rollouts.constraint_costs == 0).nonzero().squeeze(0)
         if feasible_ids.size(0) > 0:
-            _, sorted_ids_of_feasible_ids = rollouts.objective_costs[feasible_ids].squeeze().sort()
+            _, sorted_ids_of_feasible_ids = rollouts.objective_costs[feasible_ids].sort()
             best_rollout_id = feasible_ids[sorted_ids_of_feasible_ids[0]].item()
             return rollouts.actions[best_rollout_id], rollouts_by_time
         else:
