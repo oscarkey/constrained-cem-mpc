@@ -127,6 +127,14 @@ class TestTorchPolytope:
 
         assert torch_polytope.dim == np_polytope.dim
 
+    def test__to__returns_self(self):
+        np_polytope = polytope.box2poly([[0, 1], [0, 1]])
+        torch_polytope = TorchPolytope(np_polytope)
+
+        p = torch_polytope.to('cpu')
+
+        assert p == torch_polytope
+
 
 STATE_DIMEN = 2
 ACTION_DIMEN = 2

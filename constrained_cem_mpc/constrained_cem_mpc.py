@@ -43,6 +43,16 @@ class TorchPolytope:
     def plot(self, *args, **kwargs):
         Polytope(self._A.numpy(), self._b.numpy()).plot(*args, **kwargs)
 
+    def to(self, device):
+        """Moves the tensors representing the polytope to the given device.
+
+        :param device: same as device argument to torch.Tensor.to()
+        """
+        self._A = self._A.to(device)
+        self._b = self._b.to(device)
+        self.chebXc = self.chebXc.to(device)
+        return self
+
 
 def box2torchpoly(box: List[List[float]]) -> TorchPolytope:
     """Similar to polytope.box2poly(), but returns a TorchPolytope."""
