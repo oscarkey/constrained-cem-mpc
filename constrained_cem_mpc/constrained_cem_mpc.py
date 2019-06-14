@@ -158,9 +158,10 @@ class RolloutFunction:
         assert_shape(actions, (self._num_rollouts, self._time_horizon, self._action_dimen))
 
         # One more state than the time horizon because of the initial state.
-        trajectories = torch.empty((self._num_rollouts, self._time_horizon + 1, self._state_dimen))
+        trajectories = torch.empty((self._num_rollouts, self._time_horizon + 1, self._state_dimen),
+                                   device=initial_states.device)
         trajectories[:, 0, :] = initial_states
-        objective_costs = torch.zeros((self._num_rollouts,))
+        objective_costs = torch.zeros((self._num_rollouts,), device=initial_states.device)
         for t in range(self._time_horizon):
             next_states, costs = self._dynamics(trajectories[:, t, :], actions[:, t, :])
 
@@ -175,7 +176,7 @@ class RolloutFunction:
 
     def _compute_constraint_costs(self, trajectories: Tensor, actions: Tensor) -> Tensor:
         # TODO: Batch computation of constraint costs.
-        costs = torch.empty((self._num_rollouts))
+        costs = torch.empty((self._num_rollouts), device=trajectories.device)
         for i in range(self._num_rollouts):
             costs[i] = sum([constraint(trajectories[i], actions[i]) for constraint in self._constraints])
         return costs
@@ -213,8 +214,8 @@ class ConstrainedCemMpc:
 
         :returns: A list of rollouts from each optimisation step. The final step is last.
         """
-        means = torch.zeros((self._time_horizon, self._action_dimen))
-        stds = torch.ones((self._time_horizon, self._action_dimen))
+        means = torch.zeros((self._time_horizon, self._action_dimen), device=initial_state.device)
+        stds = torch.ones((self._time_horizon, self._action_dimen), device=initial_state.device)
         rollouts_by_time = []
         for i in range(self._num_iterations):
             rollouts = self._rollout_function.perform_rollouts((initial_state, means, stds))
