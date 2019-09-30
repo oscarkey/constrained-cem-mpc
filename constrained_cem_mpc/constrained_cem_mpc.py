@@ -130,7 +130,7 @@ Rollouts = namedtuple('Rollouts', 'trajectories actions objective_costs constrai
 class RolloutFunction:
     """Computes rollouts (trajectory, action sequence, cost) given an initial state and parameters.
 
-    This class and all of its members are passed between processes, so should be kept lightweight.
+    This logic is in a separate class to allow multithreaded rollouts, though this is not currently implemented.
     """
 
     def __init__(self, dynamics: DynamicsFunc, constraints: List[Constraint], state_dimen: int, action_dimen: int,
