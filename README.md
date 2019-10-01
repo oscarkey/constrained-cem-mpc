@@ -9,12 +9,20 @@ There are many tasks for which constrained MPC is useful. For example, if contro
 The algorithm uses PyTorch, so is suitable for any task where the model of the environment is implemented using PyTorch. For example, the model could be fixed dynamics known ahead of time, a deep learning model or a Gaussian process model (using [GPyTorch](https://gpytorch.ai)).
 
 ## How to use
-1. Specify the dynamics and costs of the system, by implementing `DynamicsFunc`. These could be fixed, or a learnt model.
-2. Specify constraints, by implementing `Constraint`. `ActionConstraint`, `StateConstraint` and `TerminalConstraint` are existing implementations.
-3. Construct `ConstrainedCemMpc`
-4. Call `get_actions(initial_state)` to compute an approximately optimal set of actions to take from an initial state, which satisfy the constraints.
+1. Install by running `pip install git+https://github.com/oscarkey/constrained-cem-mpc`
+2. Specify the dynamics and costs of the system, by implementing `DynamicsFunc`. These could be fixed, or a learnt model.
+3. Specify constraints, by implementing `Constraint`. `ActionConstraint`, `StateConstraint` and `TerminalConstraint` are existing implementations.
+4. Construct `ConstrainedCemMpc`
+5. Call `get_actions(initial_state)` to compute an approximately optimal set of actions to take from an initial state, which satisfy the constraints.
+
+The library uses Python 3.7
 
 ## Demo code
 To start, take a look at `demos/pendulum_demo.py`, a 2D pendulum demo using OpenAI Gym Pendulum-v0.
 
 `demos/2d_path_demo.py` plots the trajectories in 2D, which is useful for debugging during development of the library.
+
+## Library development
+To set up the development environment, run `pipenv install`.
+
+To run the unit tests, use `pytest constrained_cem_mpc/tests`
