@@ -1,3 +1,8 @@
+"""Demo where the algorithm must find a path in a 2D environment. Useful for debugging.
+
+The environment consists of a rectangular state constraint. The trajectory starts in the bottom left, and there is a
+terminal constraint in the top right that the trajectories must finish inside.  In the top left there is a
+"""
 from typing import Tuple
 
 import matplotlib.pyplot as plt
@@ -64,20 +69,21 @@ def plot_trajectories(ts: Tensor, axes=None):
         plt.show()
 
 
-def mean_objective_cost(rollouts: Rollouts):
-    return rollouts.objective_costs.mean().item()
+def min_objective_cost(rollouts: Rollouts):
+    return rollouts.objective_costs.min().item()
 
 
-def mean_constraint_cost(rollouts: Rollouts):
-    return rollouts.constraint_costs.mean().item()
+def min_constraint_cost(rollouts: Rollouts):
+    return rollouts.constraint_costs.min().item()
 
 
-def plot_costs(rollouts_by_time: [Rollouts]):
-    avg_objective_costs = [mean_objective_cost(rollouts) for rollouts in rollouts_by_time]
-    avg_constraint_costs = [mean_constraint_cost(rollouts) for rollouts in rollouts_by_time]
-    xs = range(1, len(rollouts_by_time) + 1)
-    plt.plot(xs, avg_objective_costs, label='objective cost')
-    plt.plot(xs, avg_constraint_costs, label='constraint cost')
+def plot_costs(rollouts_by_iteration: [Rollouts]):
+    """Plots the optimisation process: the minimum objective and constraint costs by iteration."""
+    min_objective_costs = [min_objective_cost(rollouts) for rollouts in rollouts_by_iteration]
+    min_constraint_costs = [min_constraint_cost(rollouts) for rollouts in rollouts_by_iteration]
+    xs = range(1, len(rollouts_by_iteration) + 1)
+    plt.plot(xs, min_objective_costs, label='objective cost')
+    plt.plot(xs, min_constraint_costs, label='constraint cost')
     plt.plot([0, 50], [0, 0], color='black')
     plt.legend()
     plt.show()
@@ -91,10 +97,10 @@ def main():
                    ActionConstraint(box2torchpoly([[-1, 1], [-1, 1]]))]
     mpc = ConstrainedCemMpc(Dynamics(), constraints, state_dimen, action_dimen, time_horizon=20, num_rollouts=400,
                             num_elites=30, num_iterations=50)
-    rollouts_by_time = mpc.optimize_trajectories(torch.tensor([0.5, 0.5]))
+    rollouts_by_iteration = mpc.optimize_trajectories(torch.tensor([0.5, 0.5]))
 
-    plot_trajectories(rollouts_by_time[-1].trajectories[0:10])
-    plot_costs(rollouts_by_time)
+    plot_trajectories(rollouts_by_iteration[-1].trajectories[0:10])
+    plot_costs(rollouts_by_iteration)
 
 
 if __name__ == '__main__':

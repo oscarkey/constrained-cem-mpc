@@ -1,3 +1,4 @@
+"""An MPC implementation which supports polytopic constraints for trajectories, using the CEM optimisation method."""
 from abc import ABC, abstractmethod
 from collections import namedtuple
 from typing import Union, List, Tuple
@@ -6,6 +7,7 @@ import torch
 import torch.nn.functional as F
 from polytope import Polytope, polytope
 from torch import Tensor
+from torch.distributions import Normal
 
 from constrained_cem_mpc.utils import assert_shape
 
@@ -46,7 +48,7 @@ class TorchPolytope:
     def to(self, device):
         """Moves the tensors representing the polytope to the given device.
 
-        :param device: same as device argument to torch.Tensor.to()
+        :param device: same as device argument of torch.Tensor.to()
         """
         self._A = self._A.to(device)
         self._b = self._b.to(device)
@@ -55,7 +57,12 @@ class TorchPolytope:
 
 
 def box2torchpoly(box: List[List[float]]) -> TorchPolytope:
-    """Similar to polytope.box2poly(), but returns a TorchPolytope."""
+    """Constructs a TorchPolytope from a box.
+
+    Similar to polytope.box2poly(), but returns a TorchPolytope.
+
+    :param box: [n x 2] where n is the number of dimensions, the boundaries of the box
+    """
     return TorchPolytope(polytope.box2poly(box))
 
 
@@ -64,7 +71,11 @@ class Constraint(ABC):
 
     @abstractmethod
     def __call__(self, trajectory: Tensor, actions: Tensor) -> float:
-        """Returns the (>=0) cost of the given trajectory wrt the constraints this function represents."""
+        """Returns the (>=0) cost of the given trajectory wrt the constraints this function represents.
+
+        :param trajectory: [T x state dimen]
+        :param actions: [T x action dimen]
+        """
         pass
 
 
@@ -86,7 +97,7 @@ class TerminalConstraint(Constraint):
 
 
 class StateConstraint(Constraint):
-    """Represents the safe area that the trajectory must remain inside."""
+    """Constrains the trajectory states to lie within a polytope."""
 
     def __init__(self, safe_area: TorchPolytope) -> None:
         super().__init__()
@@ -98,7 +109,7 @@ class StateConstraint(Constraint):
 
 
 class ActionConstraint(Constraint):
-    """Constrains actions to lie within some polytope."""
+    """Constrains the trajectory actions to lie within a polytope."""
 
     def __init__(self, safe_region: TorchPolytope, penalty: float = 3):
         super().__init__()
@@ -111,6 +122,8 @@ class ActionConstraint(Constraint):
 
 
 class DynamicsFunc(ABC):
+    """The user should implement this to specify the dynamics of the system, and the objective function."""
+
     @abstractmethod
     def __call__(self, states: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
         """Computes the next state and cost of the action.
@@ -164,7 +177,7 @@ class RolloutFunction:
         assert_shape(means, (self._time_horizon, self._action_dimen))
         assert_shape(stds, (self._time_horizon, self._action_dimen))
 
-        actions = torch.distributions.Normal(means, stds).sample(sample_shape=(self._num_rollouts,))
+        actions = Normal(means, stds).sample(sample_shape=(self._num_rollouts,))
         assert_shape(actions, (self._num_rollouts, self._time_horizon, self._action_dimen))
 
         # One more state than the time horizon because of the initial state.
@@ -193,20 +206,26 @@ class RolloutFunction:
 
 
 class ConstrainedCemMpc:
-    """Performs MPC to compute the next action, while remaining within a set of constraints.
+    """An MPC implementation which supports polytopic constraints for trajectories, using cross-entropy optimisation.
 
-    Uses the cross-entropy method to optimise the trajectories, while including constraints as additional optimisation
-    objectives.
-
-    This method is based on 'Constrained Cross-Entropy Method for Safe Reinforcement Learning', Wen, Topcu.
+    This method is based on 'Constrained Cross-Entropy Method for Safe Reinforcement Learning'; Wen, Topcu. It includes
+    the constraints as additional optimisation objectives, which must be satisfied before the trajectory cost is
+    optimised.
     """
 
-    def __init__(self, dynamics_func, constraints: List[Constraint], state_dimen: int, action_dimen: int,
+    def __init__(self, dynamics_func: DynamicsFunc, constraints: List[Constraint], state_dimen: int, action_dimen: int,
                  time_horizon: int, num_rollouts: int, num_elites: int, num_iterations: int,
                  rollout_function: RolloutFunction = None):
         """Creates a new instance.
 
-        :param rollout_function: Only set this in unit tests, normally this function will create it automatically.
+        :param constraints: list of constraints which any trajectory must satisfy, or [] if there are no constraints
+        :param state_dimen: number of dimensions of the state
+        :param action_dimen: number of dimensions of the actions
+        :param time_horizon: T, number of time steps into the future that the algorithm plans
+        :param num_rollouts: number of trajectories that the algorithm samples each optimisation iteration
+        :param num_elites: number of trajectories, i.e. the best m, which the algorithm refits the distribution to
+        :param num_iterations: number of iterations of CEM
+        :param rollout_function: only set in unit tests
         """
         self._action_dimen = action_dimen
         self._time_horizon = time_horizon
@@ -222,11 +241,14 @@ class ConstrainedCemMpc:
     def optimize_trajectories(self, initial_state: Tensor) -> List[Rollouts]:
         """Performs stochastic rollouts and optimises them using CEM, subject to the constraints.
 
-        :returns: A list of rollouts from each optimisation step. The final step is last.
+        The trajectories this function returns are not guaranteed to be safe. Thus, normally, do not call this method
+        directly. Instead, call get_actions().
+
+        :returns: A list of rollouts from each CEM iteration. The final step is last.
         """
         means = torch.zeros((self._time_horizon, self._action_dimen), device=initial_state.device)
         stds = torch.ones((self._time_horizon, self._action_dimen), device=initial_state.device)
-        rollouts_by_time = []
+        rollouts_by_iteration = []
         for i in range(self._num_iterations):
             rollouts = self._rollout_function.perform_rollouts((initial_state, means, stds))
             elite_rollouts = self._select_elites(rollouts)
@@ -234,9 +256,9 @@ class ConstrainedCemMpc:
             means = elite_rollouts.actions.mean(dim=0)
             stds = elite_rollouts.actions.std(dim=0)
 
-            rollouts_by_time.append(rollouts)
+            rollouts_by_iteration.append(rollouts)
 
-        return rollouts_by_time
+        return rollouts_by_iteration
 
     def _select_elites(self, rollouts: Rollouts) -> Rollouts:
         """Returns the elite rollouts.
@@ -262,19 +284,18 @@ class ConstrainedCemMpc:
         The sequence of actions is guaranteed to be safe wrt to the constraints.
 
         :param state: [state dimen], the initial state to plan from
-        :returns: (the actions [N x action dimen], or None if we didn't find a safe sequence of actions,
-        rollouts by time as returned by optimize_trajectories())
+        :returns: (the actions [N x action dimen] or None if we didn't find a safe sequence of actions,
+                   rollouts by iteration as returned by optimize_trajectories())
         """
-        # TODO: Add retries.
-        rollouts_by_time = self.optimize_trajectories(state)
+        rollouts_by_iteration = self.optimize_trajectories(state)
 
         # Use the rollouts from the final optimisation step.
-        rollouts = rollouts_by_time[-1]
+        rollouts = rollouts_by_iteration[-1]
 
         feasible_ids = (rollouts.constraint_costs == 0).nonzero().squeeze(0)
         if feasible_ids.size(0) > 0:
             _, sorted_ids_of_feasible_ids = rollouts.objective_costs[feasible_ids].sort()
             best_rollout_id = feasible_ids[sorted_ids_of_feasible_ids[0]].item()
-            return rollouts.actions[best_rollout_id], rollouts_by_time
+            return rollouts.actions[best_rollout_id], rollouts_by_iteration
         else:
-            return None, rollouts_by_time
+            return None, rollouts_by_iteration

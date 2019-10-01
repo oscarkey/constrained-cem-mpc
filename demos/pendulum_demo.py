@@ -1,3 +1,14 @@
+"""A demo which uses the library to balance a pendulum.
+
+Rather than swing up the pendulum, the pendulum starts in the upwards vertical position. The safety constraint is that
+it must not fall more than a small angle from the vertical.
+
+There is no reward for keeping the pendulum near vertical, just a requirement to stay in the safe region. Thus the
+pendulum swings around within this region.
+
+The demo uses the OpenAI Gym Pendulum-v0. The MPC algorithm has access to the exact dynamics of the pendulum, there is
+no learning.
+"""
 import time
 from typing import Tuple
 
@@ -11,6 +22,11 @@ from constrained_cem_mpc import ConstrainedCemMpc, ActionConstraint, box2torchpo
 
 
 class Dynamics(DynamicsFunc):
+    """Exact dynamics of the pendulum.
+
+    For this demo we assume we know the exact dynamics. These are taken from the Pendulum-v0 environment in OpenAI Gym.
+    """
+
     def __call__(self, states: Tensor, actions: Tensor) -> Tuple[Tensor, Tensor]:
         th = states[:, 0]
         thdot = states[:, 1]
@@ -33,7 +49,8 @@ class Dynamics(DynamicsFunc):
         return torch.stack((newth, newthdot), dim=1), objective_cost
 
 
-def observation_to_state(observation: (float, float, float)) -> Tensor:
+def observation_to_state(observation: Tuple[float, float, float]) -> Tensor:
+    """Converts the Gym observation into a state, (angle, angular velocity)."""
     th = np.arccos(observation[0])
     thdot = observation[2]
     return torch.tensor([th, thdot], dtype=torch.double)
@@ -62,17 +79,18 @@ def main():
     for i in range(400):
         env.render()
         state = observation_to_state(observation)
-        time_start = time.time()
+        optimisation_start = time.time()
         actions, _ = mpc.get_actions(state)
-        time_end = time.time()
-        print('time in solver:', time_end - time_start)
+        optimisation_end = time.time()
+        print('time optimising:', optimisation_end - optimisation_start)
 
+        # Sometimes the optimisation process may fail to find a safe action sequence, in which case we do nothing.
         if actions is None:
             action = torch.tensor([0])
-            print('default action', action)
+            print('taking default action: ', action)
         else:
             action = actions[0]
-            print('mpc action', action)
+            print('taking mpc action: ', action)
 
         observation, reward, done, info = env.step(action.numpy())
 
